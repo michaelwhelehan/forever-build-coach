@@ -1,0 +1,16 @@
+# One-click deploy on Render: New > Blueprint, pick this repo.
+services:
+  - type: web
+    name: forever-build-coach
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: ACCESS_TOKEN
+        generateValue: true
+      - key: FOREVERDB_API_KEY
+        sync: false
+      - key: BLIZZARD_CLIENT_ID
+        sync: false
+      - key: BLIZZARD_CLIENT_SECRET
+        sync: false

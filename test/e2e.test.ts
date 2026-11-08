@@ -1,0 +1,165 @@
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import express from "express";
+import type { Server as HttpServer } from "node:http";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { createApp } from "../src/index.js";
+import { Everloot } from "../src/sources/everloot.js";
+import { ForeverDb } from "../src/sources/foreverdb.js";
+import { Blizzard } from "../src/sources/blizzard.js";
+
+// A stand-in for Everloot's public MCP, answering in the shapes of its published schemas.
+const calls: string[] = [];
+const FAKE: Record<string, (a: Record<string, unknown>) => Record<string, unknown>> = {
+  search_knowledge: (a) => ({ hits: [{ id: 1, extId: 19019, kind: "item", name: `Result for ${a.query}`, licence: "CC BY-SA 4.0" }] }),
+  item_page: (a) => ({
+    connected: true, dataAsOf: new Date().toISOString(), url: `https://everloot.app/item/${a.itemId}`,
+    page: {
+      itemId: a.itemId, name: a.itemId === 1 ? "Sturdy Axe" : "Rusty Sword", drops: [],
+      reported: { shown: a.itemId === 1
+        ? [{ fact: "strength", value: 8, reporters: 5, build: "1.60.1", lastSeen: null }, { fact: "damage_per_second", value: 14, reporters: 5, build: "1.60.1", lastSeen: null }]
+        : [{ fact: "stamina", value: 6, reporters: 4, build: "1.60.1", lastSeen: null }, { fact: "damage_per_second", value: 11, reporters: 4, build: "1.60.1", lastSeen: null }],
+        contested: [] },
+    },
+  }),
+  talent_tree: (a) => ({ label: "x", build: "1.60.1.70862", class: a.class, points: { firstPointLevel: 10, maxLevel: 60, total: 51, pointLevels: Array.from({ length: 51 }, (_, i) => i + 10) }, trees: [], nodes: [] }),
+  market_value: (a) => ({ connected: true, dataAsOf: null, page: { realm: a.realm, itemId: a.itemId, value: a.itemId === 2589 ? { itemId: 2589, market: 1250, min: 1000, historical: 1300, quantity: 40, day: "2026-11-07", ageDays: 1, reporters: 6, thin: false } : null } }),
+  profession_path: () => ({ connected: true, dataAsOf: null, page: { profession: "tailoring", fromSkill: 1, toSkill: 50, steps: [{ recipe: "Bolt of Linen Cloth", fromSkill: 1, toSkill: 50, crafts: 50, points: 49, reagents: [{ item: "Linen Cloth", count: 100 }], copper: 12000, reporters: 4 }], gaps: [], reagents: [], copper: 12000 } }),
+  recent_changes: () => ({ posts: [] }),
+};
+
+function fakeEverloot() {
+  const app = express();
+  app.use(express.json());
+  app.post("/mcp/public", async (req, res) => {
+    const server = new Server({ name: "fake-everloot", version: "0" }, { capabilities: { tools: {} } });
+    server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: Object.keys(FAKE).map((name) => ({ name, inputSchema: { type: "object" as const } })) }));
+    server.setRequestHandler(CallToolRequestSchema, async (r) => {
+      calls.push(r.params.name);
+      const f = FAKE[r.params.name];
+      if (!f) return { content: [{ type: "text", text: "unknown tool" }], isError: true };
+      const structured = f((r.params.arguments ?? {}) as Record<string, unknown>);
+      return { content: [{ type: "text", text: JSON.stringify(structured) }], structuredContent: structured };
+    });
+    const t = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+    await server.connect(t);
+    await t.handleRequest(req, res, req.body);
+  });
+  return app;
+}
+
+function fakeForeverDb() {
+  const app = express();
+  app.get("/api/v1/items/:id", (req, res) => {
+    if (req.header("x-api-key") !== "fdb_test") return res.status(401).end();
+    res.json({ data: { id: Number(req.params.id), name: "Sturdy Axe", stats: [{ type: "Strength", value: 8 }, { type: "Stamina", value: 3 }], dps: 14 }, meta: { build: "1.60.1.70862" } });
+  });
+  return app;
+}
+
+let upstream: HttpServer, fdb: HttpServer, ours: HttpServer, base: string;
+const listen = (app: express.Express) => new Promise<HttpServer>((r) => { const s = app.listen(0, "127.0.0.1", () => r(s)); });
+const port = (s: HttpServer) => (s.address() as { port: number }).port;
+
+beforeAll(async () => {
+  upstream = await listen(fakeEverloot());
+  fdb = await listen(fakeForeverDb());
+  const deps = {
+    everloot: new Everloot(`http://127.0.0.1:${port(upstream)}/mcp/public`),
+    foreverdb: new ForeverDb("fdb_test", `http://127.0.0.1:${port(fdb)}/api/v1`),
+    blizzard: new Blizzard(undefined, undefined),
+  };
+  ours = await listen(createApp(deps, "secret-token"));
+  base = `http://127.0.0.1:${port(ours)}`;
+});
+afterAll(() => { upstream?.close(); fdb?.close(); ours?.close(); });
+
+async function connect(path: string) {
+  const c = new Client({ name: "test", version: "0" });
+  await c.connect(new StreamableHTTPClientTransport(new URL(base + path)));
+  return c;
+}
+const json = (r: unknown) => JSON.parse(((r as { content: { text: string }[] }).content[0]).text);
+
+describe("end to end", () => {
+  it("rejects a wrong token", async () => {
+    await expect(connect("/mcp/wrong")).rejects.toThrow();
+  });
+
+  it("lists the tools and prompt", async () => {
+    const c = await connect("/mcp/secret-token");
+    const { tools } = await c.listTools();
+    expect(tools.map((t) => t.name)).toEqual(expect.arrayContaining(["kb_guide", "search_game", "item_lookup", "compare_items", "talent_tree", "xp_calculator", "levelling_plan", "market_price", "farm_value", "profession_cost", "character_lookup", "everloot", "foreverdb"]));
+    const { prompts } = await c.listPrompts();
+    expect(prompts[0].name).toBe("optimize_build");
+    await c.close();
+  });
+
+  it("merges ForeverDB and Everloot item data with confidence", async () => {
+    const c = await connect("/mcp/secret-token");
+    const r = json(await c.callTool({ name: "item_lookup", arguments: { itemId: 1 } }));
+    expect(r.name).toBe("Sturdy Axe");
+    expect(r.stats).toMatchObject({ str: 8, sta: 3, weapon_dps: 14 });
+    expect(r.statsFrom).toBe("both");
+    expect(r.confidence.label).toBe("high");
+    expect(r.sources.map((s: { id: string }) => s.id)).toEqual(["foreverdb", "everloot"]);
+    await c.close();
+  });
+
+  it("compares items for a spec", async () => {
+    const c = await connect("/mcp/secret-token");
+    const r = json(await c.callTool({ name: "compare_items", arguments: { class: "warrior", spec: "arms", items: [{ itemId: 2, slot: "two_hand" }, { itemId: 1, slot: "two_hand" }] } }));
+    expect(r.ranking[0].name).toBe("Sturdy Axe");
+    expect(r.ranking[0].vsFirstListed.startsWith("+")).toBe(true);
+    expect(r.confidence.label).toBe("low"); // starter weights are a Classic baseline
+    await c.close();
+  });
+
+  it("caches Everloot calls", async () => {
+    const c = await connect("/mcp/secret-token");
+    const before = calls.filter((x) => x === "talent_tree").length;
+    await c.callTool({ name: "talent_tree", arguments: { class: "mage" } });
+    await c.callTool({ name: "talent_tree", arguments: { class: "mage" } });
+    expect(calls.filter((x) => x === "talent_tree").length - before).toBe(1);
+    const p = json(await c.callTool({ name: "talent_points_by_level", arguments: { class: "mage", level: 25, talentedRanks: 2 } }));
+    expect(p.pointsAvailable).toBe(16);
+    await c.close();
+  });
+
+  it("prices farms and professions, treating missing prices as unknown", async () => {
+    const c = await connect("/mcp/secret-token");
+    const f = json(await c.callTool({ name: "farm_value", arguments: { realm: "Normal", perHour: [{ itemId: 2589, count: 100 }, { itemId: 999, count: 10 }] } }));
+    expect(f.goldPerHourCopper).toBe(1187 * 100);
+    expect(f.itemsWithoutPrice).toBe(1);
+    const p = json(await c.callTool({ name: "profession_cost", arguments: { profession: "Tailoring", toSkill: 50 } }));
+    expect(p.totalCost).toBe("1g 20s");
+    await c.close();
+  });
+
+  it("runs the levelling maths", async () => {
+    const c = await connect("/mcp/secret-token");
+    const r = json(await c.callTool({ name: "levelling_plan", arguments: { level: 20, targetLevel: 21, activities: [{ name: "quest hub", xp: 6000, minutes: 30, killXpShare: 0.4 }, { name: "grind", xp: 4000, minutes: 30, killXpShare: 1 }] } }));
+    expect(r.best).toBe("quest hub");
+    expect(r.activities[0].hoursToTarget).toBe(1.9);
+    const x = json(await c.callTool({ name: "xp_calculator", arguments: { level: 20, mobLevel: 21, rested: true } }));
+    expect(x.xpPerKill).toBe(Math.round(145 * 1.05 * 2));
+    expect(x.confidence.label).toBe("low");
+    await c.close();
+  });
+
+  it("explains missing Blizzard keys instead of crashing", async () => {
+    const c = await connect("/mcp/secret-token");
+    const r = await c.callTool({ name: "character_lookup", arguments: { name: "Anduin", surname: "Wrynn" } });
+    expect(r.isError).toBe(true);
+    expect(json(r).error).toMatch(/develop\.battle\.net/);
+    await c.close();
+  });
+
+  it("accepts a bearer token too", async () => {
+    const res = await fetch(`${base}/mcp`, { method: "POST", headers: { authorization: "Bearer secret-token", "content-type": "application/json", accept: "application/json, text/event-stream" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "kb_guide", arguments: { topic: "status" } } }) });
+    expect(res.status).toBe(200);
+  });
+});

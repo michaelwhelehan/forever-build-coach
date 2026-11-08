@@ -1,0 +1,66 @@
+# Source register. Every source the server reads, what it is good for, and how much to trust it.
+# `tier` feeds the confidence score (see formulas/confidence.md).
+# Checked 2026-11-08. Update the date when you re-check a source.
+
+- id: everloot
+  name: Everloot
+  url: https://everloot.app
+  access: Public MCP at https://everloot.app/mcp/public (streamable HTTP, no key)
+  limits: 200 requests per hour per IP address, handshake included. This server caches to stay under it.
+  licence: Data CC BY-SA 4.0, code AGPL-3.0. Name and logo not licensed.
+  covers: Items, drops, NPCs, quests, vendors, objects, talent trees (game files), class/race combos,
+    profession levelling paths, recipe colour thresholds, auction prices per realm, census, blue posts.
+  tiers:
+    player_observed: Facts become public after 3 separate addon installs agree.
+    game_files: Read from the Forever client, labelled unconfirmed until seen in play.
+  checked: 2026-11-08
+
+- id: foreverdb
+  name: ForeverDB
+  url: https://foreverdb.net
+  access: REST API at https://foreverdb.net/api/v1 with an X-API-Key header. Keys need approval
+    (log in with Battle.net at https://foreverdb.net/developers and request access).
+  limits: 60 requests per minute, 10,000 per day per key.
+  licence: Data extracted from the Forever client (Blizzard's). Must credit "Data from ForeverDB.net" with a link.
+  covers: Items with full stats, spells, quests, vendors, dungeons, zones, classes (abilities, ranks,
+    talents), item sets, professions and recipes, gathering, buffs and nerfs per build, Merchant's Favor.
+  tiers:
+    game_files: Client data. Vendor rows can be filtered to "seen in Forever".
+  checked: 2026-11-08
+
+- id: blizzard
+  name: Blizzard Battle.net API
+  url: https://develop.battle.net
+  access: OAuth client credentials (free). Forever namespaces static-forever-{region},
+    dynamic-forever-{region}, profile-forever-{region}. Not officially documented yet.
+  limits: Blizzard's standard API limits.
+  licence: Blizzard Developer API Terms.
+  covers: Character profile and equipped gear (slug is name-surname, visible from level 10 after logging out),
+    guilds, rulesets (Forever has rulesets instead of realms), auction houses per ruleset.
+  tiers:
+    official: Live character data straight from Blizzard.
+  checked: 2026-11-08
+
+- id: warcraft_tavern_xp
+  name: Warcraft Tavern, Experience & Rested XP guide
+  url: https://www.warcrafttavern.com/forever/guides/experience/
+  access: Web page, read by hand. Used for the XP table and rested rules in formulas/xp.md.
+  tiers:
+    community_guide: One guide; its XP table matches Classic 1.12 exactly.
+  checked: 2026-11-08
+
+- id: polestar
+  name: Polestar
+  url: https://github.com/fitzforge/polestar
+  access: In-game levelling guide addon (GPL-3.0). Not a data API; recommend it for routes.
+  tiers:
+    community_guide: Route quality, not numbers.
+  checked: 2026-11-08
+
+- id: classic_baseline
+  name: Classic 1.12 mechanics
+  url: https://warcraft.wiki.gg
+  access: Well-known Classic formulas (mob XP, stat conversions). Used only where no Forever source exists.
+  tiers:
+    classic_baseline: Assumed to carry over. Always flagged as low confidence.
+  checked: 2026-11-08

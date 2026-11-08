@@ -1,0 +1,19 @@
+# fly launch --copy-config --no-deploy ; fly secrets set ACCESS_TOKEN=... ; fly deploy
+app = "forever-build-coach"
+primary_region = "lhr"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    path = "/health"
+    interval = "30s"
+    timeout = "5s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

@@ -1,0 +1,52 @@
+# Starter stat weights for levelling, used by compare_items.
+#
+# Confidence: LOW. These are Classic 1.12 rules of thumb (strength to attack power, agility to crit and so on)
+# tuned for solo levelling, where stamina and staying alive matter more than at max level. Forever rebalanced
+# talents and may have changed conversions. Treat a close result (within ~5%) as a tie.
+# Pass your own weights to compare_items to override any of these, and send a pull request when you find
+# better numbers.
+#
+# Units: physical specs score in "attack power equivalents", casters in "spell power equivalents".
+# crit, hit, spell_crit and spell_hit are per 1%. weapon_dps is per 1 DPS on the main hand.
+# Keys: str agi sta int spi ap rap sp heal crit hit spell_crit spell_hit mp5 armor def dodge block weapon_dps
+
+source: classic_baseline
+confidence: low
+
+classes:
+  warrior:
+    arms:       { str: 2.0, agi: 1.1, sta: 0.6, ap: 1.0, crit: 22, hit: 18, armor: 0.02, weapon_dps: 14 }
+    fury:       { str: 2.0, agi: 1.2, sta: 0.6, ap: 1.0, crit: 24, hit: 20, armor: 0.02, weapon_dps: 12 }
+    protection: { str: 1.6, agi: 1.0, sta: 1.4, ap: 0.8, crit: 14, hit: 14, armor: 0.1, def: 1.2, dodge: 15, block: 6, weapon_dps: 8 }
+  paladin:
+    retribution: { str: 2.0, agi: 0.9, sta: 0.6, int: 0.4, spi: 0.2, ap: 1.0, sp: 0.5, crit: 20, hit: 16, mp5: 1.5, armor: 0.02, weapon_dps: 14 }
+    holy:        { int: 1.0, spi: 0.5, sta: 0.5, heal: 1.0, sp: 0.4, spell_crit: 12, mp5: 2.5 }
+    protection:  { str: 1.0, agi: 0.6, sta: 1.4, int: 0.5, sp: 0.8, def: 1.2, armor: 0.1, dodge: 12, block: 6, mp5: 1.5, weapon_dps: 4 }
+  hunter:
+    beast_mastery: { agi: 2.0, str: 0.3, sta: 0.6, int: 0.4, spi: 0.2, rap: 1.0, ap: 0.2, crit: 22, hit: 20, mp5: 1.2, weapon_dps: 10 }
+    marksmanship:  { agi: 2.0, str: 0.3, sta: 0.5, int: 0.4, spi: 0.2, rap: 1.0, ap: 0.2, crit: 26, hit: 22, mp5: 1.2, weapon_dps: 12 }
+    survival:      { agi: 2.2, str: 0.4, sta: 0.6, int: 0.4, spi: 0.2, rap: 1.0, ap: 0.4, crit: 24, hit: 20, mp5: 1.2, weapon_dps: 10 }
+  rogue:
+    assassination: { agi: 1.8, str: 1.0, sta: 0.5, ap: 1.0, crit: 24, hit: 22, weapon_dps: 13 }
+    combat:        { agi: 1.8, str: 1.0, sta: 0.5, ap: 1.0, crit: 20, hit: 24, weapon_dps: 15 }
+    subtlety:      { agi: 1.8, str: 1.0, sta: 0.5, ap: 1.0, crit: 22, hit: 20, weapon_dps: 13 }
+  priest:
+    shadow:     { int: 0.6, spi: 0.9, sta: 0.6, sp: 1.0, spell_crit: 6, spell_hit: 12, mp5: 2.0 }
+    holy:       { int: 1.0, spi: 0.9, sta: 0.4, heal: 1.0, spell_crit: 10, mp5: 2.5 }
+    discipline: { int: 1.0, spi: 0.8, sta: 0.5, heal: 0.9, sp: 0.4, spell_crit: 10, mp5: 2.5 }
+  shaman:
+    enhancement: { str: 2.0, agi: 1.1, sta: 0.6, int: 0.4, ap: 1.0, crit: 22, hit: 18, mp5: 1.5, armor: 0.02, weapon_dps: 15 }
+    elemental:   { int: 0.8, spi: 0.3, sta: 0.5, sp: 1.0, spell_crit: 11, spell_hit: 12, mp5: 2.0 }
+    restoration: { int: 1.0, spi: 0.4, sta: 0.4, heal: 1.0, spell_crit: 10, mp5: 2.8 }
+  mage:
+    arcane: { int: 0.8, spi: 0.6, sta: 0.6, sp: 1.0, spell_crit: 10, spell_hit: 12, mp5: 1.8 }
+    fire:   { int: 0.7, spi: 0.5, sta: 0.6, sp: 1.0, spell_crit: 12, spell_hit: 13, mp5: 1.6 }
+    frost:  { int: 0.7, spi: 0.6, sta: 0.6, sp: 1.0, spell_crit: 8, spell_hit: 12, mp5: 1.8 }
+  warlock:
+    affliction:  { int: 0.5, spi: 0.4, sta: 0.9, sp: 1.0, spell_crit: 4, spell_hit: 13, mp5: 1.0 }
+    demonology:  { int: 0.5, spi: 0.4, sta: 1.0, sp: 1.0, spell_crit: 5, spell_hit: 12, mp5: 1.0 }
+    destruction: { int: 0.6, spi: 0.3, sta: 0.8, sp: 1.0, spell_crit: 11, spell_hit: 13, mp5: 1.0 }
+  druid:
+    balance:     { int: 0.8, spi: 0.6, sta: 0.5, sp: 1.0, spell_crit: 9, spell_hit: 12, mp5: 2.0 }
+    feral:       { str: 2.0, agi: 1.8, sta: 0.8, ap: 1.0, crit: 22, hit: 18, armor: 0.05, def: 0.6, dodge: 8 }
+    restoration: { int: 1.0, spi: 0.9, sta: 0.4, heal: 1.0, spell_crit: 8, mp5: 2.6 }
