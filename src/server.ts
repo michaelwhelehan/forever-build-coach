@@ -11,7 +11,7 @@ import { normaliseStats, scoreStats, weightsFor, specsFor, STAT_KEYS, type Stats
 import * as xp from "./formulas/xp.js";
 import { netAfterCut, formatCopper, AH_CUT } from "./formulas/gold.js";
 
-export const VERSION = "0.2.0";
+export const VERSION = "0.3.0";
 
 const CLASSES = ["warrior", "paladin", "hunter", "rogue", "priest", "shaman", "mage", "warlock", "druid"] as const;
 const classEnum = z.enum(CLASSES);
@@ -47,6 +47,12 @@ function ageDays(iso: unknown): number | undefined {
   if (typeof iso !== "string") return undefined;
   const t = Date.parse(iso);
   return Number.isFinite(t) ? (Date.now() - t) / 86_400_000 : undefined;
+}
+
+/** Keep a debug blob small enough to read: whole if it fits, otherwise its JSON cut at `max` characters. */
+function capJson(v: unknown, max: number): unknown {
+  const txt = JSON.stringify(v);
+  return txt.length <= max ? v : `${txt.slice(0, max)}… (cut)`;
 }
 
 /** Wrap a handler so source errors come back as readable tool errors instead of crashes. */
@@ -107,9 +113,21 @@ export function createServer(deps: Deps): McpServer {
     annotations: { readOnlyHint: true, openWorldHint: true },
   }, safe(async ({ query, kind, limit }) => {
     const srcs: Src[] = [];
+    const notes = ["Hits marked as game-file data are unconfirmed in play until players report them."];
     const ev = await everloot.call("search_knowledge", { query, kind, version: "forever", limit });
     srcs.push(everlootSrc());
-    const hits = (ev.structured?.hits as Record<string, unknown>[] | undefined) ?? [];
+    let hits = (ev.structured?.hits as Record<string, unknown>[] | undefined) ?? [];
+    if (!hits.length) {
+      // Everloot's Forever index is thin (it has no item names yet), so widen to every version and say so.
+      const wide = await everloot.call("search_knowledge", { query, limit }).catch(() => undefined);
+      hits = (wide?.structured?.hits as Record<string, unknown>[] | undefined) ?? [];
+      if (hits.length) notes.push("Nothing matched in Everloot's Forever data, so these hits come from every version. gameVersion 'lore' or 'classic' (often the 2023 Warcraft Wiki) is a Classic baseline, not confirmed for Forever (low confidence). A wiki page's extId is not an item id.");
+    }
+    if (!kind || kind === "item") {
+      notes.push(foreverdb.enabled
+        ? "Item names are searched in ForeverDB (foreverdbItems)."
+        : "Everloot can't search items by name yet: it knows Forever items by id only. Searching items by name needs a ForeverDB key (FOREVERDB_API_KEY). Meanwhile, item_lookup takes an id, and the everloot tool's item_categories lists ids by type and slot (e.g. class 'weapons', subclass 'wands').");
+    }
     let foreverdbItems: unknown;
     if (foreverdb.enabled && (!kind || kind === "item")) {
       foreverdbItems = await foreverdb.get("items", { q: query, limit }).then((r) => r.data).catch((e: Error) => ({ error: e.message }));
@@ -120,7 +138,7 @@ export function createServer(deps: Deps): McpServer {
       everlootHits: hits.length ? hits : ev.text,
       ...(foreverdbItems !== undefined ? { foreverdbItems } : {}),
       sources: srcs,
-      notes: ["Hits marked as game-file data are unconfirmed in play until players report them."],
+      notes,
     });
   }));
 
@@ -293,9 +311,10 @@ export function createServer(deps: Deps): McpServer {
       name: z.string().min(1),
       surname: z.string().min(1),
       region: z.enum(["us", "eu", "kr", "tw"]).default("eu"),
+      debug: z.boolean().default(false).describe("Also return an outline of the armory page's data and the requests it made. Turned on automatically when no gear is found."),
     },
     annotations: { readOnlyHint: true, openWorldHint: true },
-  }, safe(async ({ name, surname, region }) => {
+  }, safe(async ({ name, surname, region, debug }) => {
     let apiError: string | undefined;
     if (blizzard.enabled) {
       const viaApi = await blizzard.character(region, name, surname).catch((e: Error) => { apiError = e.message; return undefined; });
@@ -325,6 +344,7 @@ export function createServer(deps: Deps): McpServer {
       equipped: page.equipped,
       gearSource: page.gearSource,
       ...(page.renderedText ? { renderedText: page.renderedText } : {}),
+      ...((debug || !page.equipped.length) && page.debug ? { pageDebug: capJson(page.debug, 12_000) } : {}),
       confidence: single({ tier: "official", note: "parsed from Blizzard's public armory page; updates when the character logs out" }),
       sources: [{ id: "blizzard_armory", name: "World of Warcraft Forever armory", url: page.url, credit: BLIZZARD_CREDIT }],
       notes,
@@ -648,10 +668,20 @@ async function fetchItem(deps: Deps, itemId: number): Promise<Record<string, unk
   let name: string | undefined;
   let foreverdbItem: unknown;
 
-  const [fdb, ev] = await Promise.all([
+  const [fdb, ev, cat] = await Promise.all([
     deps.foreverdb.enabled ? deps.foreverdb.get(`items/${itemId}`).catch((e: Error) => ({ error: e.message })) : Promise.resolve(undefined),
     deps.everloot.call("item_page", { itemId }).catch((e: Error) => ({ error: e.message })),
+    deps.everloot.call("item_categories", { item: itemId }).catch(() => undefined),
   ]);
+  // Type, slot and quality from the game files: known for every item, even ones no player has reported.
+  const catItem = cat?.structured?.item as Record<string, { name?: string } | null | number> | undefined;
+  const category = catItem ? {
+    type: (catItem.class as { name?: string } | null)?.name,
+    subtype: (catItem.subclass as { name?: string } | null)?.name,
+    slot: (catItem.slot as { name?: string } | null)?.name,
+    quality: (catItem.quality as { name?: string } | null)?.name,
+    from: `game files, build ${String(cat?.structured?.build ?? "unknown")} (unconfirmed)`,
+  } : undefined;
 
   if (fdb && !("error" in fdb)) {
     const d = (fdb.data ?? {}) as Record<string, unknown>;
@@ -693,9 +723,12 @@ async function fetchItem(deps: Deps, itemId: number): Promise<Record<string, unk
     srcs.push(everlootSrc(url));
   } else if (ev && "error" in ev) notes.push(ev.error);
 
-  if (statsFrom === "none") notes.push("No stats found from any source yet.");
+  if (statsFrom === "none") notes.push(deps.foreverdb.enabled
+    ? "No stats found from any source yet."
+    : "No stats yet: players haven't reported this item to Everloot. Full game-file stats for every item need a ForeverDB key (FOREVERDB_API_KEY).");
+  if (!name && category) notes.push("The item exists in the game files, but no player has reported its name yet.");
   return {
-    itemId, name: name ?? null, stats, statsFrom,
+    itemId, name: name ?? null, ...(category ? { category } : {}), stats, statsFrom,
     ...(drops ? { drops } : {}),
     ...(foreverdbItem ? { foreverdbItem } : {}),
     confidence: evidence.length ? agree(evidence) : { label: "low", score: 0, reasons: ["no source has this item"] },

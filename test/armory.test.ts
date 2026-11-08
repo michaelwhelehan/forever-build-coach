@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseArmoryPage, parseDescription, armoryUrl, gearFromJson } from "../src/sources/armory.js";
+import { parseArmoryPage, parseDescription, armoryUrl, gearFromJson, shapeOf, urlsIn } from "../src/sources/armory.js";
 
 // The head of the real page for Uzal Muzal, 2026-11-08 (its body loads in the browser).
 const REAL_HEAD = `<html><head><title>Uzal Muzal - Character</title>
@@ -41,5 +41,19 @@ describe("armory page", () => {
     const res = { equipped_items: [{ slot: { type: "HEAD", name: "Head" }, item: { id: 10 }, name: "Leather Cap", stats: [{ type: { type: "AGILITY", name: "Agility" }, value: 3 }] }], character_class: { name: "Rogue" } };
     expect(gearFromJson(res)).toEqual({ class: "Rogue", equipped: [{ slot: "Head", itemId: 10, name: "Leather Cap", quality: undefined, level: undefined, stats: { agi: 3 } }] });
     expect(gearFromJson({ unrelated: [1, 2, 3] }).equipped).toEqual([]);
+  });
+
+  it("reads gear kept as an object keyed by slot", () => {
+    const state = { profile: { equipment: { HEAD: { itemId: 5, itemName: "Cowl", quality: "Common" }, MAIN_HAND: { item: { id: 6, name: "Staff" }, item_level: 12 }, notes: "x" } } };
+    expect(gearFromJson(state).equipped).toEqual([
+      { slot: "HEAD", itemId: 5, name: "Cowl", quality: "Common", level: undefined, stats: {} },
+      { slot: "MAIN_HAND", itemId: 6, name: "Staff", quality: undefined, level: 12, stats: {} },
+    ]);
+  });
+
+  it("outlines page data and finds URLs in it, for debugging", () => {
+    const state = { character: { name: "Uzal", links: { equipment: "/en-us/forever/eu/armory/character/uzal-muzal/equipment.json", icon: "https://x/y.png" } }, list: [{ a: 1 }, { a: 2 }] };
+    expect(shapeOf(state)).toEqual({ character: { name: "Uzal", links: { equipment: "/en-us/forever/eu/armory/character/uzal-muzal/equipment.json", icon: "https://x/y.png" } }, list: ["2 ×", { a: 1 }] });
+    expect([...urlsIn(state)]).toEqual(["/en-us/forever/eu/armory/character/uzal-muzal/equipment.json"]);
   });
 });
