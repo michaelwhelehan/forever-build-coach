@@ -61,6 +61,7 @@ const env: Env = {
   EVERLOOT_URL: "https://everloot.test/mcp/public",
   FOREVERDB_API_KEY: "fdb_test",
   FOREVERDB_BASE: "https://foreverdb.test/api/v1",
+  FOREVERDB_ITEMS_URL: "off", // tests never reach the real foreverdb.net
   CACHE: kv,
 };
 const base = "https://coach.test";
@@ -72,6 +73,15 @@ beforeAll(() => {
     const req = new Request(input, init);
     if (req.url.startsWith("https://everloot.test/")) return fakeEverloot(req);
     if (req.url.startsWith("https://foreverdb.test/")) return fakeForeverDb(req);
+    if (req.url === "https://foreverdb-site.test/data/items.json") {
+      const filler = Array.from({ length: 1200 }, (_, i) => ({ id: 100000 + i, n: `Filler ${i}`, q: 1, il: 50, rl: 50, c: 15, sc: 0, inv: 0 }));
+      return Response.json([
+        { id: 2583, n: "Woolen Boots", q: 2, il: 19, rl: 14, c: 4, sc: 1, inv: 8, st: [[5, 2], [6, 2], [45, 2]], ar: 22 },
+        { id: 2569, n: "Linen Boots", q: 2, il: 13, rl: 8, c: 4, sc: 1, inv: 8, st: [[7, 2]], ar: 17 },
+        { id: 9999, n: "Plate Sabatons", q: 2, il: 16, rl: 11, c: 4, sc: 4, inv: 8, st: [[4, 9]], ar: 200 },
+        ...filler,
+      ]);
+    }
     if (req.url === "https://foreverdb-site.test/items") return new Response('<ul><li><a href="/item/11287">Lesser Magic Wand</a> (item level 15)</li><li><a href="/item/11288">Greater Magic Wand</a> (item level 21)</li><li><a href="/item/2589">Linen Cloth</a> (item level 5)</li></ul>', { headers: { "content-type": "text/html" } });
     if (req.url === "https://foreverdb-site.test/item/11287") return new Response('<h1>Lesser Magic Wand</h1><p>Uncommon Ranged Wand (item level 15, requires level 5)</p><ul><li>Slot: Ranged (Wand)</li><li>12 - 22 Arcane damage, speed 1.50</li><li>11.3 damage per second</li><li>+1 Spell Power</li></ul>', { headers: { "content-type": "text/html" } });
     if (req.url.startsWith("https://worldofwarcraft.blizzard.com/")) {
@@ -183,6 +193,20 @@ describe("end to end", () => {
     const it = json(await c.callTool({ name: "item_lookup", arguments: { itemId: 11287 } }));
     expect(it).toMatchObject({ name: "Lesser Magic Wand", requiredLevel: 5, slot: "Ranged", stats: { sp: 1 }, statsFrom: "both" }); // the fake Everloot reports dps 11, and player reports win
     expect(it.sources[0]).toMatchObject({ id: "foreverdb", url: "https://foreverdb-site.test/item/11287" });
+    await c.close();
+  });
+
+  it("finds upgrades from ForeverDB's item list", async () => {
+    const withList: Env = { ...env, FOREVERDB_API_KEY: undefined, FOREVERDB_SITE: "https://foreverdb-site.test", FOREVERDB_ITEMS_URL: "https://foreverdb-site.test/data/items.json" };
+    const c = new Client({ name: "test", version: "0" });
+    await c.connect(new StreamableHTTPClientTransport(new URL(base + "/mcp/secret-token"), { fetch: (i, init) => worker.fetch(new Request(i, init), withList) }));
+    const r = json(await c.callTool({ name: "find_items", arguments: { slot: "feet", maxLevel: 15, class: "mage", spec: "frost", equippedItemId: 2569 } }));
+    expect(r.items.map((i: { name: string }) => i.name)).toEqual(["Woolen Boots", "Linen Boots"]);
+    expect(r.items[0].gainOverEquipped).toBeGreaterThan(0);
+    expect(r.equipped.name).toBe("Linen Boots");
+    const s = json(await c.callTool({ name: "search_game", arguments: { query: "woolen", kind: "item" } }));
+    expect(s.foreverdbItems[0]).toMatchObject({ itemId: 2583, name: "Woolen Boots" });
+    expect([...kv.data.keys()]).toContain("foreverdb-data:items");
     await c.close();
   });
 
