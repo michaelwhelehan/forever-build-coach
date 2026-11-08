@@ -1,0 +1,72 @@
+# XP numbers used by the xp_calculator and levelling_plan tools.
+# Each block says where it came from. Change a number here, not in the code.
+
+xp_to_next_level:
+  source: warcraft_tavern_xp
+  confidence: medium   # one Forever guide; identical to Classic 1.12
+  # index 0 = level 1. Level 60 is the cap.
+  values: [400, 900, 1400, 2100, 2800, 3600, 4500, 5400, 6500, 7600,
+           8800, 10100, 11400, 12900, 14400, 16000, 17700, 19400, 21300, 23200,
+           25200, 27300, 29400, 31700, 34000, 36400, 38900, 41400, 44300, 47400,
+           50800, 54500, 58600, 62800, 67100, 71600, 76100, 80800, 85700, 90700,
+           95800, 101000, 106300, 111800, 117500, 123200, 129100, 135100, 141200, 147500,
+           153900, 160400, 167100, 173900, 180800, 187900, 195000, 202300, 209800]
+
+level_cap: 60
+
+mob_xp:
+  source: classic_baseline
+  confidence: low   # no Forever source publishes the kill formula yet
+  # Same-level mob: base = level * 5 + 45
+  base_per_level: 5
+  base_constant: 45
+  # Mob above you: +5% per level, counted up to 4 levels.
+  higher_bonus_per_level: 0.05
+  higher_bonus_max_levels: 4
+  # Mob below you: base * (1 - diff / zero_difference), zero once grey.
+  zero_difference:   # [from_level, value]
+    - [1, 5]
+    - [8, 6]
+    - [10, 7]
+    - [12, 8]
+    - [16, 9]
+    - [20, 11]
+    - [30, 12]
+    - [40, 13]
+    - [45, 14]
+    - [50, 15]
+    - [55, 16]
+    - [60, 17]
+  elite_multiplier: 2
+
+rested:
+  source: warcraft_tavern_xp
+  confidence: medium
+  kill_multiplier: 2              # rested doubles kill XP until the pool runs out (quest XP is not doubled)
+  accrual_per_8h: 0.05            # share of the current level's XP, in an inn, capital or on a Cozy Sleeping Bag
+  cap_share_of_level: 1.5         # 150% of the current level (30 bubbles)
+  well_rested_per_rank: 0.04      # Legacy talent: +4% accrual and +4% cap per rank (beta figure)
+
+quest_level_penalty:
+  source: warcraft_tavern_xp
+  confidence: medium
+  # "more than 5 levels below: reduced by 10-20% per additional level". Classic 1.12 steps used as the curve.
+  multipliers_by_levels_below:
+    6: 0.8
+    7: 0.6
+    8: 0.4
+    9: 0.2
+    10: 0.1
+
+group:
+  source: warcraft_tavern_xp
+  confidence: low   # summary of one guide; Forever adds a bigger penalty for high-level members
+  # Kill XP is multiplied by this, then split between members by level share.
+  bonus_by_size: {1: 1.0, 2: 1.0, 3: 1.166, 4: 1.3, 5: 1.4}
+
+buffs:
+  source: warcraft_tavern_xp
+  confidence: medium
+  well_fed_kill_xp: 0.05          # Cooking food, about 15 minutes
+  cozy_sleeping_bag_per_stack: 0.01
+  cozy_sleeping_bag_max_stacks: 3

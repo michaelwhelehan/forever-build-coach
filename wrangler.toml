@@ -1,0 +1,26 @@
+name = "forever-build-coach"
+main = "src/worker.ts"
+compatibility_date = "2026-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Packs kb/ into the Worker before every dev run and deploy.
+[build]
+command = "node scripts/bundle-kb.mjs"
+watch_dir = "kb"
+
+[observability]
+enabled = true
+
+# Optional but recommended: a KV namespace that shares cached answers across Worker instances,
+# so friends hit Everloot's 200-calls-an-hour limit far less. Create it with
+#   npx wrangler kv namespace create CACHE
+# then uncomment this block and paste the id it prints.
+# [[kv_namespaces]]
+# binding = "CACHE"
+# id = "<paste id here>"
+
+# Secrets (never put them in this file):
+#   npx wrangler secret put ACCESS_TOKEN
+#   npx wrangler secret put FOREVERDB_API_KEY        (optional)
+#   npx wrangler secret put BLIZZARD_CLIENT_ID       (optional)
+#   npx wrangler secret put BLIZZARD_CLIENT_SECRET   (optional)
