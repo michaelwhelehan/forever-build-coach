@@ -41,6 +41,16 @@
     official: Live character data straight from Blizzard.
   checked: 2026-11-08
 
+- id: blizzard_armory
+  name: World of Warcraft Forever armory
+  url: https://worldofwarcraft.blizzard.com/en-us/forever/eu/armory/character/
+  access: Public web page per character, read when the server has no Battle.net API key.
+  limits: The page's head gives level, race and item level; its gear loads in the browser, so it may be missing.
+    The class field was blank ("character.class") on 2026-11-08.
+  tiers:
+    official: Blizzard's own page, but scraping can break whenever the page changes.
+  checked: 2026-11-08
+
 - id: warcraft_tavern_xp
   name: Warcraft Tavern, Experience & Rested XP guide
   url: https://www.warcrafttavern.com/forever/guides/experience/

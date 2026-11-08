@@ -3,6 +3,10 @@ main = "src/worker.ts"
 compatibility_date = "2026-11-01"
 compatibility_flags = ["nodejs_compat"]
 
+# Cloudflare Browser Rendering: opens the Forever armory page in a real browser so character
+# lookups get gear without a Battle.net API key.
+browser = { binding = "BROWSER" }
+
 # Packs kb/ into the Worker before every dev run and deploy.
 [build]
 command = "node scripts/bundle-kb.mjs"

@@ -72,6 +72,11 @@ beforeAll(() => {
     const req = new Request(input, init);
     if (req.url.startsWith("https://everloot.test/")) return fakeEverloot(req);
     if (req.url.startsWith("https://foreverdb.test/")) return fakeForeverDb(req);
+    if (req.url.startsWith("https://worldofwarcraft.blizzard.com/")) {
+      return req.url.endsWith("/uzal-muzal")
+        ? new Response('<html><head><meta name="description" content="Uzal - 15 Undead character.class, 7 ilvl"><meta property="og:title" content="Uzal Muzal - Character - WoW"></head><body></body></html>', { headers: { "content-type": "text/html" } })
+        : new Response("not found", { status: 404 });
+    }
     return realFetch(req);
   });
 });
@@ -156,11 +161,14 @@ describe("end to end", () => {
     await c.close();
   });
 
-  it("explains missing Blizzard keys instead of crashing", async () => {
+  it("falls back to the armory page without Blizzard keys", async () => {
     const c = await connect("/mcp/secret-token");
-    const r = await c.callTool({ name: "character_lookup", arguments: { name: "Anduin", surname: "Wrynn" } });
-    expect(r.isError).toBe(true);
-    expect(json(r).error).toMatch(/develop\.battle\.net/);
+    const r = json(await c.callTool({ name: "character_lookup", arguments: { name: "Uzal", surname: "Muzal" } }));
+    expect(r.character).toMatchObject({ level: 15, race: "Undead", class: null, averageItemLevel: 7 });
+    expect(r.notes.join(" ")).toMatch(/ask the player/);
+    const missing = await c.callTool({ name: "character_lookup", arguments: { name: "Nobody", surname: "Here" } });
+    expect(missing.isError).toBe(true);
+    expect(json(missing).error).toMatch(/level 10/);
     await c.close();
   });
 

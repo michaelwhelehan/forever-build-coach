@@ -86,7 +86,7 @@ Check `https://…workers.dev/health` to see which data sources are switched on.
 |---|---|
 | `ACCESS_TOKEN` | Shared secret in the connector URL. Without it anyone with the URL can use your server. |
 | `FOREVERDB_API_KEY` | Full item stats, class abilities, recipes, buffs and nerfs. Request at https://foreverdb.net/developers (log in with Battle.net). |
-| `BLIZZARD_CLIENT_ID`, `BLIZZARD_CLIENT_SECRET` | Read characters' equipped gear. Free at https://develop.battle.net/access/clients. |
+| `BLIZZARD_CLIENT_ID`, `BLIZZARD_CLIENT_SECRET` | Read characters' equipped gear. Free at https://develop.battle.net/access/clients. Without them, character lookups read the public armory page instead, opened with Cloudflare Browser Rendering (the `BROWSER` binding in `wrangler.toml`). |
 | `EVERLOOT_HOURLY_BUDGET` | Optional, default 180 per Worker instance. Everloot allows 200 calls an hour per IP. Answers are cached (talent trees 12 h, items 2 h, prices 30 min). |
 
 ## The knowledge base

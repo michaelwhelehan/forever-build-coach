@@ -4,6 +4,8 @@ import { kbText, kbFiles, sources, sourceRef } from "./kb.js";
 import { Everloot, EVERLOOT_CREDIT } from "./sources/everloot.js";
 import { ForeverDb, FOREVERDB_CREDIT, FOREVERDB_PATHS } from "./sources/foreverdb.js";
 import { Blizzard, BLIZZARD_CREDIT } from "./sources/blizzard.js";
+import { fetchArmory, armoryUrl } from "./sources/armory.js";
+import type { BrowserWorker } from "@cloudflare/puppeteer";
 import { agree, derived, single, type Confidence, type Evidence } from "./formulas/confidence.js";
 import { normaliseStats, scoreStats, weightsFor, specsFor, STAT_KEYS, type Stats } from "./formulas/stats.js";
 import * as xp from "./formulas/xp.js";
@@ -25,7 +27,7 @@ Rules for every answer (full text: kb_guide topic "rules"):
 
 Good starting points: character_lookup (if the player gives name + surname), talent_tree, compare_items, levelling_plan, profession_cost. Use the optimize_build prompt for a full review.`;
 
-export interface Deps { everloot: Everloot; foreverdb: ForeverDb; blizzard: Blizzard }
+export interface Deps { everloot: Everloot; foreverdb: ForeverDb; blizzard: Blizzard; browser?: BrowserWorker }
 
 type Src = { id: string; name: string; url: string; credit?: string };
 
@@ -286,7 +288,7 @@ export function createServer(deps: Deps): McpServer {
 
   server.registerTool("character_lookup", {
     title: "Look up a character",
-    description: "Read a WoW: Forever character from Blizzard's API: level, class, race, specs and equipped gear with stats, ready for compare_items. Forever characters are named 'First Surname'; they appear from level 10, after logging out. Needs Blizzard API keys on the server.",
+    description: "Read a WoW: Forever character: level, class, race, specs and equipped gear with stats, ready for compare_items. Uses Blizzard's API when the server has keys, otherwise the public Forever armory page (which may give only level, race and item level). Forever characters are named 'First Surname'; they appear from level 10, after logging out.",
     inputSchema: {
       name: z.string().min(1),
       surname: z.string().min(1),
@@ -294,7 +296,42 @@ export function createServer(deps: Deps): McpServer {
     },
     annotations: { readOnlyHint: true, openWorldHint: true },
   }, safe(async ({ name, surname, region }) => {
-    const { profile, equipment, specs } = await blizzard.character(region, name, surname);
+    let apiError: string | undefined;
+    if (blizzard.enabled) {
+      const viaApi = await blizzard.character(region, name, surname).catch((e: Error) => { apiError = e.message; return undefined; });
+      if (viaApi) return characterFromApi(viaApi);
+    }
+    // No API key (or the API failed): read the public armory page instead, in a real browser when we have one,
+    // because the page loads its gear with JavaScript.
+    let page: Awaited<ReturnType<typeof fetchArmory>> & { renderedText?: string };
+    let renderError: string | undefined;
+    if (deps.browser) {
+      const { renderArmory } = await import("./sources/browser.js");
+      page = await renderArmory(deps.browser, armoryUrl(region, name, surname)).catch(async (e: Error) => {
+        renderError = e.message;
+        return fetchArmory(region, name, surname);
+      });
+    } else page = await fetchArmory(region, name, surname);
+    const notes = [
+      "Read from the public armory page because this server has no Battle.net API key" + (apiError ? ` (the API said: ${apiError})` : "") + ".",
+      ...(renderError ? [`Opening the page in a browser failed (${renderError}), so only the plain page was read.`] : []),
+      ...(!deps.browser ? ["Gear needs Cloudflare Browser Rendering (a BROWSER binding) or Battle.net keys on this server."] : []),
+      ...(page.renderedText ? ["Gear wasn't in a format this server could parse; renderedText is the page as a player sees it. Read the gear from it and pass the stats to compare_items."] : []),
+    ];
+    if (!page.equipped.length) notes.push("The armory page doesn't include gear, so ask the player what they're wearing (or which items they're choosing between) and pass the stats to compare_items.");
+    if (!page.class) notes.push("The armory page left the class blank; ask the player.");
+    return reply({
+      character: { name, surname, title: page.title, level: page.level ?? null, race: page.race ?? null, class: page.class ?? null, averageItemLevel: page.averageItemLevel ?? null },
+      equipped: page.equipped,
+      gearSource: page.gearSource,
+      ...(page.renderedText ? { renderedText: page.renderedText } : {}),
+      confidence: single({ tier: "official", note: "parsed from Blizzard's public armory page; updates when the character logs out" }),
+      sources: [{ id: "blizzard_armory", name: "World of Warcraft Forever armory", url: page.url, credit: BLIZZARD_CREDIT }],
+      notes,
+    });
+  }));
+
+  function characterFromApi({ profile, equipment, specs }: Awaited<ReturnType<Blizzard["character"]>>) {
     const pick = (o: unknown, ...path: string[]) => path.reduce<unknown>((v, k) => (v && typeof v === "object" ? (v as Record<string, unknown>)[k] : undefined), o);
     const gear = ((pick(equipment, "equipped_items") as Record<string, unknown>[] | undefined) ?? []).map((it) => {
       const n = normaliseStats(pick(it, "stats") ?? []);
@@ -319,7 +356,7 @@ export function createServer(deps: Deps): McpServer {
       confidence: single({ tier: "official", note: "live from Blizzard; updates when the character logs out" }),
       sources: [blizzardSrc()],
     });
-  }));
+  }
 
   // ───────────────────────── Levelling ─────────────────────────
 
