@@ -22,6 +22,8 @@ export interface ArmoryCharacter {
   /** Where the gear came from, or why there is none. */
   gearSource: string;
   embeddedStateFound: boolean;
+  /** Outline of the page's embedded data and URLs in it, to find where gear lives when parsing fails. */
+  debug?: { stateShapes: unknown[]; urls: string[]; requests?: string[] };
 }
 
 const decode = (s: string) =>
@@ -75,14 +77,43 @@ export function embeddedStates(html: string): unknown[] {
 const isObj = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === "object" && !Array.isArray(v);
 const str = (v: unknown): string | undefined => typeof v === "string" ? v : isObj(v) ? str(v.name ?? v.type ?? v.slug) : undefined;
 
-/** Find arrays that look like equipped items anywhere in a JSON tree. */
+const SLOT_KEYS = ["slot", "inventoryType", "inventory_type", "slotType", "slot_type", "itemSlot", "equipmentSlot", "slotName", "slotId"];
+const ITEM_KEYS = ["item", "id", "itemId", "item_id", "name", "itemName"];
+/** Slot names as Blizzard writes them in various APIs (HEAD, MAIN_HAND, mainHand, head…). */
+const SLOT_NAME = /^(head|neck|shoulders?|shirt|chest|robe|waist|belt|legs|feet|boots|wrists?|hands|gloves|finger_?[12]?|ring_?[12]?|trinket_?[12]?|back|cloak|main_?hand|off_?hand|two_?hand|ranged|relic|tabard|ammo)$/i;
+
+const hasAny = (o: Record<string, unknown>, keys: string[]) => keys.some((k) => k in o);
+
+/** Find lists that look like equipped items anywhere in a JSON tree: arrays of slot rows, or objects keyed by slot. */
 function findGearArrays(node: unknown, depth = 0): Record<string, unknown>[][] {
-  if (depth > 12 || !node || typeof node !== "object") return [];
+  if (depth > 14 || !node || typeof node !== "object") return [];
   if (Array.isArray(node)) {
-    const looksLikeGear = node.length > 0 && node.every((e) => isObj(e) && ("slot" in e || "inventoryType" in e || "inventory_type" in e) && ("item" in e || "id" in e || "itemId" in e || "name" in e));
+    const looksLikeGear = node.length > 0 && node.every((e) => isObj(e) && hasAny(e, SLOT_KEYS) && hasAny(e, ITEM_KEYS));
     return looksLikeGear ? [node as Record<string, unknown>[]] : node.flatMap((e) => findGearArrays(e, depth + 1));
   }
-  return Object.values(node).flatMap((v) => findGearArrays(v, depth + 1));
+  const entries = Object.entries(node);
+  const slotted = entries.filter(([k, v]) => SLOT_NAME.test(k) && isObj(v) && hasAny(v, ITEM_KEYS));
+  if (slotted.length >= 2) return [slotted.map(([k, v]) => ({ slot: k, ...(v as Record<string, unknown>) }))];
+  return entries.flatMap(([, v]) => findGearArrays(v, depth + 1));
+}
+
+/** A short outline of a JSON tree (keys, array lengths, sample values), to see where a page keeps its data. */
+export function shapeOf(node: unknown, depth = 0, maxDepth = 5): unknown {
+  if (Array.isArray(node)) return node.length ? [`${node.length} ×`, shapeOf(node[0], depth + 1, maxDepth)] : [];
+  if (isObj(node)) {
+    if (depth >= maxDepth) return `{${Object.keys(node).slice(0, 12).join(", ")}}`;
+    return Object.fromEntries(Object.entries(node).slice(0, 40).map(([k, v]) => [k, shapeOf(v, depth + 1, maxDepth)]));
+  }
+  if (typeof node === "string") return node.length > 60 ? `${node.slice(0, 60)}…` : node;
+  return node;
+}
+
+/** Strings in a JSON tree that look like URLs or API paths. */
+export function urlsIn(node: unknown, out = new Set<string>(), depth = 0): Set<string> {
+  if (depth > 14 || out.size > 60) return out;
+  if (typeof node === "string") { if (/^(https?:)?\/\/|^\/[\w-]+\//.test(node) && !/\.(png|jpe?g|gif|svg|webp|woff2?|css)(\?|$)/i.test(node)) out.add(node); }
+  else if (node && typeof node === "object") for (const v of Object.values(node)) urlsIn(v, out, depth + 1);
+  return out;
 }
 
 function findFirst(node: unknown, keys: string[], depth = 0): unknown {
@@ -100,11 +131,12 @@ function gearRow(e: Record<string, unknown>): ArmoryGear {
   if (typeof dps === "number") stats.weapon_dps = dps;
   const armor = isObj(e.armor) ? e.armor.value : e.armor;
   if (typeof armor === "number") stats.armor = armor;
-  const level = isObj(e.level) ? e.level.value : e.itemLevel ?? e.level;
+  const level = isObj(e.level) ? e.level.value : e.itemLevel ?? e.item_level ?? e.level;
+  const slotKey = SLOT_KEYS.find((k) => k in e);
   return {
-    slot: str(e.slot) ?? str(e.inventoryType) ?? str(e.inventory_type),
-    itemId: Number(item?.id ?? e.itemId ?? e.id) || undefined,
-    name: str(e.name) ?? str(item?.name),
+    slot: slotKey ? str(e[slotKey]) ?? (typeof e[slotKey] === "number" ? String(e[slotKey]) : undefined) : undefined,
+    itemId: Number(item?.id ?? e.itemId ?? e.item_id ?? e.id) || undefined,
+    name: str(e.name) ?? str(e.itemName) ?? str(item?.name),
     quality: str(e.quality),
     level: typeof level === "number" ? level : undefined,
     stats,
@@ -137,6 +169,7 @@ export function parseArmoryPage(html: string, url: string): ArmoryCharacter {
     equipped,
     gearSource: equipped.length ? "embedded page data" : states.length ? "page data found, but no equipment in it" : "no gear on the page (it loads gear in the browser)",
     embeddedStateFound: states.length > 0,
+    debug: { stateShapes: states.map((st) => shapeOf(st)), urls: [...urlsIn(states)].slice(0, 60) },
   };
 }
 
