@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseGuide, pickSections, guideUrl } from "../src/sources/guides.js";
+import { parseGuide, pickSections, guideUrl, professionGuideUrl, parseSkillSteps, stepsFrom } from "../src/sources/guides.js";
 import { parseExport } from "../src/addon-export.js";
 
 const PAGE = `<html><head><title>Frost Mage Leveling Guide - WoW Forever</title></head><body><main>
@@ -38,5 +38,30 @@ describe("addon export", () => {
       class: "mage", level: 15, name: "Uzal", slots: { HEAD: 0, BACK: 2580, MAINHAND: 4566, RANGED: 11288 },
     });
     expect(() => parseExport("hello")).toThrow(/FBC1/);
+  });
+});
+
+describe("profession routes", () => {
+  const html = `<html><head><title>Tailoring leveling</title></head><body><main><h1>Tailoring leveling guide</h1>
+    <h2>Route</h2><ol>
+    <li><strong>1-27: Bolt of Linen Cloth</strong>. Make about 26. Each needs 2 Linen Cloth.</li>
+    <li><strong>27-73: Linen Belt</strong>. Make about 60. Each needs 1 Bolt of Linen Cloth, 1 Coarse Thread.</li>
+    <li>Train Journeyman Tailoring before skill 75.</li>
+    <li><strong>73-100: Heavy Linen Gloves</strong>. Make about 30.</li></ol>
+    <h2>Shopping list</h2><ul><li>1,760 Runecloth</li><li>105 Coarse Thread</li></ul></main></body></html>`;
+  const g = parseGuide(html, professionGuideUrl("Tailoring"));
+
+  it("builds the url", () => {
+    expect(professionGuideUrl("First Aid")).toBe("https://foreverdb.net/profession/first-aid/leveling");
+  });
+  it("splits the route into skill steps and keeps notes inside them", () => {
+    const steps = parseSkillSteps(g);
+    expect(steps.map((s) => `${s.from}-${s.to}`)).toEqual(["1-27", "27-73", "73-100"]);
+    expect(steps[1].text).toContain("Train Journeyman");
+    expect(steps[2].text).not.toContain("Runecloth");
+  });
+  it("starts from the current skill", () => {
+    expect(stepsFrom(parseSkillSteps(g), 50, 2).map((s) => s.from)).toEqual([27, 73]);
+    expect(stepsFrom(parseSkillSteps(g), 100)).toEqual([]);
   });
 });

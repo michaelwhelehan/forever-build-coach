@@ -32,6 +32,8 @@ people "know" is really Classic 1.12 carried over.
 | `find_items` | Every Forever item by slot, type, level and quality, ranked for your class and spec, with the gain over what you wear | |
 | `gear_upgrades` | Upgrades for every slot from the in-game addon's export line (or a list of item ids), biggest gain first, with ForeverDB links | |
 | `levelling_guide` | Answers "what next?" and "which talent next?" from Icy Veins' Forever levelling guide for your class and spec | |
+| `profession_guide` | What to craft next to level a profession, with reagents and a shopping list, from ForeverDB's route | |
+| `gold_guide` | ForeverDB's money guides: the auction house, what sells at low levels, best professions by class | |
 | `character_lookup` | Read a character's level, specs and equipped gear from the armory | |
 | `talent_tree` | A class's Forever talent trees and starter builds | |
 | `talent_points_by_level` | Points available at a level (with the Legacy "Talented" perk) | |

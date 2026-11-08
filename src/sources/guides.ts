@@ -5,7 +5,16 @@ import { TtlCache, HOUR, type KvLike } from "../cache.js";
  * Levelling guides read on request and kept for a day (never copied into this repo). Icy Veins'
  * robots.txt allows /wow-forever/. Answers quote only the sections a question needs, with the link.
  */
-export const GUIDE_HOSTS = ["www.icy-veins.com", "icy-veins.com"];
+export const GUIDE_HOSTS = ["www.icy-veins.com", "icy-veins.com", "foreverdb.net", "www.foreverdb.net"];
+
+/** ForeverDB's step-by-step levelling route for a profession, e.g. /profession/tailoring/leveling. */
+export function professionGuideUrl(profession: string): string {
+  return `https://foreverdb.net/profession/${profession.toLowerCase().trim().replace(/[\s_]+/g, "-")}/leveling`;
+}
+
+/** ForeverDB's written guides, e.g. making-money. */
+export const FOREVERDB_GUIDES = ["making-money", "professions", "best-professions-by-class"] as const;
+export const foreverdbGuideUrl = (slug: string) => `https://foreverdb.net/guide/${slug}`;
 
 const SPECS: Record<string, string[]> = {
   warrior: ["arms", "fury", "protection"], paladin: ["holy", "protection", "retribution"], hunter: ["beast-mastery", "marksmanship", "survival"],
@@ -51,7 +60,39 @@ export function parseGuide(html: string, url: string, via: Guide["via"] = "fetch
     const text = textOf(main.slice(start, end));
     if (heading && text) sections.push({ heading, level: Number(heads[i][1]), text });
   }
+  // A page without subheadings is one section, so its text is still searchable.
+  if (!sections.length) { const text = textOf(main); if (text) sections.push({ heading: title ?? url, level: 1, text }); }
   return { url, title, sections, fetchedAt: new Date().toISOString(), via };
+}
+
+export interface SkillStep { from: number; to: number; text: string }
+
+/**
+ * Skill-range steps of a profession route, e.g. "27-73: Linen Belt. Make about 60 ..." or a heading
+ * "50-75". A step runs until the next range, so its text keeps the reagents and notes under it.
+ * "Train Journeyman ..." lines stay inside the step they appear in.
+ */
+export function parseSkillSteps(g: Guide): SkillStep[] {
+  const lines = g.sections.flatMap((s) => [s.heading, ...s.text.split("\n")]);
+  const steps: SkillStep[] = [];
+  let cur: SkillStep | undefined;
+  for (const raw of lines) {
+    const l = raw.replace(/^[-*\s]+/, "");
+    const m = l.match(/^(?:skill\s*)?(\d{1,3})\s*[-–]\s*(\d{1,3})\b\s*[:.)]?/i);
+    if (m && Number(m[1]) < Number(m[2]) && Number(m[2]) <= 375) {
+      cur = { from: Number(m[1]), to: Number(m[2]), text: l };
+      steps.push(cur);
+    } else if (cur && /^(shopping list|best in slot|crafted items|trainers?)\b/i.test(l)) {
+      cur = undefined; // the lists after the route aren't part of the last step
+    } else if (cur && cur.text.length < 1200) cur.text += `\n${l}`;
+  }
+  return steps;
+}
+
+/** The steps from a skill onward: the one in progress first. */
+export function stepsFrom(steps: SkillStep[], skill = 1, count = 4): SkillStep[] {
+  const i = steps.findIndex((s) => s.to > skill);
+  return i < 0 ? [] : steps.slice(i, i + count);
 }
 
 export interface GuideMatch { heading: string; text: string; why: string }
@@ -99,7 +140,9 @@ export class Guides {
     if (!GUIDE_HOSTS.includes(host)) throw new GuideError(`Guides are read from ${GUIDE_HOSTS[0]} only.`);
     return this.cache.get(url, 24 * HOUR, async () => {
       const plain = await this.fetchPlain(url).catch((e: Error) => e);
-      if (!(plain instanceof Error) && plain.sections.length >= 3) return plain;
+      // Enough readable text means the page isn't drawn by JavaScript; otherwise open it in a browser.
+      if (!(plain instanceof Error) && plain.sections.reduce((n, x) => n + x.text.length, 0) >= 1500) return plain;
+      if (plain instanceof GuideError && /no guide/.test(plain.message)) throw plain;
       if (this.browser) return this.render(url);
       throw plain instanceof Error ? plain : new GuideError("The guide page had no sections this server could read.");
     });
@@ -107,7 +150,7 @@ export class Guides {
 
   private async fetchPlain(url: string): Promise<Guide> {
     const res = await fetch(url, { headers: { "user-agent": "Mozilla/5.0 (compatible; forever-build-coach/0.4; fan-made build helper)", accept: "text/html" } });
-    if (res.status === 404) throw new GuideError(`There's no guide at ${url}. Icy Veins may not have one for that spec yet.`);
+    if (res.status === 404) throw new GuideError(`There's no guide at ${url}. The site may not have one for that yet.`);
     if (!res.ok) throw new GuideError(`The guide answered ${res.status}.`);
     return parseGuide(await res.text(), url, "fetch");
   }
