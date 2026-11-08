@@ -80,7 +80,7 @@ const str = (v: unknown): string | undefined => typeof v === "string" ? v : isOb
 const SLOT_KEYS = ["slot", "inventoryType", "inventory_type", "slotType", "slot_type", "itemSlot", "equipmentSlot", "slotName", "slotId"];
 const ITEM_KEYS = ["item", "id", "itemId", "item_id", "name", "itemName"];
 /** Slot names as Blizzard writes them in various APIs (HEAD, MAIN_HAND, mainHand, head…). */
-const SLOT_NAME = /^(head|neck|shoulders?|shirt|chest|robe|waist|belt|legs|feet|boots|wrists?|hands|gloves|finger_?[12]?|ring_?[12]?|trinket_?[12]?|back|cloak|main_?hand|off_?hand|two_?hand|ranged|relic|tabard|ammo)$/i;
+const SLOT_NAME = /^(head|neck|shoulders?|shirt|body|chest|robe|waist|belt|legs?|feet|foot|boots|wrists?|hands?|gloves|finger_?[12]?|ring_?[12]?|trinket_?[12]?|back|cloak|main_?hand|off_?hand|two_?hand|ranged|relic|tabard|ammo)$/i;
 
 const hasAny = (o: Record<string, unknown>, keys: string[]) => keys.some((k) => k in o);
 
@@ -92,7 +92,8 @@ function findGearArrays(node: unknown, depth = 0): Record<string, unknown>[][] {
     return looksLikeGear ? [node as Record<string, unknown>[]] : node.flatMap((e) => findGearArrays(e, depth + 1));
   }
   const entries = Object.entries(node);
-  const slotted = entries.filter(([k, v]) => SLOT_NAME.test(k) && isObj(v) && hasAny(v, ITEM_KEYS));
+  // An object keyed by slot ("back", "foot", "main_hand"…): accept any key whose value is an item with a slot.
+  const slotted = entries.filter(([k, v]) => isObj(v) && hasAny(v, ITEM_KEYS) && (hasAny(v, SLOT_KEYS) || SLOT_NAME.test(k)));
   if (slotted.length >= 2) return [slotted.map(([k, v]) => ({ slot: k, ...(v as Record<string, unknown>) }))];
   return entries.flatMap(([, v]) => findGearArrays(v, depth + 1));
 }

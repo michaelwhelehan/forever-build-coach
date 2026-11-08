@@ -131,7 +131,9 @@ export function createServer(deps: Deps): McpServer {
         srcs.push(foreverdbSrc());
         notes.push("Item names are searched in ForeverDB (foreverdbItems).");
       } else if (deps.foreverdbSite) {
-        foreverdbItems = await deps.foreverdbSite.search(query, limit).catch((e: Error) => ({ error: e.message }));
+        const found = await deps.foreverdbSite.search(query, limit).catch((e: Error) => ({ error: e.message }));
+        foreverdbItems = "error" in found ? found : found.hits;
+        if (!("error" in found) && !found.hits.length) notes.push(`No name match among the ${found.indexed} items read from ForeverDB's item list (first few: ${found.sample.join("; ")}).`);
         srcs.push(foreverdbSrc());
         notes.push("Item names are searched in ForeverDB's public item list (foreverdbItems). Pass an itemId to item_lookup or compare_items for its stats.");
       } else notes.push("Everloot can't search items by name: it knows Forever items by id only.");

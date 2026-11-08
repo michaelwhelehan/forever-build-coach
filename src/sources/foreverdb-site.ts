@@ -127,11 +127,12 @@ export class ForeverDbSite {
   }
 
   /** Items whose name contains every word of the query, exact matches first. */
-  async search(query: string, limit = 10): Promise<SiteListRow[]> {
+  async search(query: string, limit = 10): Promise<{ hits: SiteListRow[]; indexed: number; sample: string[] }> {
     const words = query.toLowerCase().split(/\s+/).filter(Boolean);
     const q = query.toLowerCase().trim();
-    const rows = (await this.index()).filter((r) => { const n = r.name.toLowerCase(); return words.every((w) => n.includes(w)); });
+    const all = await this.index();
+    const rows = all.filter((r) => { const n = r.name.toLowerCase(); return words.every((w) => n.includes(w)); });
     rows.sort((a, b) => Number(b.name.toLowerCase() === q) - Number(a.name.toLowerCase() === q) || a.name.length - b.name.length);
-    return rows.slice(0, limit);
+    return { hits: rows.slice(0, limit), indexed: all.length, sample: all.slice(0, 5).map((r) => `${r.itemId} ${r.name}`) };
   }
 }

@@ -70,3 +70,11 @@ describe("gear split across lists", () => {
     expect(g.lists).toEqual([2, 2, 1]);
   });
 });
+
+describe("Forever armory layout", () => {
+  it("reads gear kept under character.gear by slot keys like foot, hand and leg", () => {
+    const row = (slot: string, id: number, name: string) => ({ id, item: { id }, slot: { type: slot, name: slot }, name, quality: { type: "UNCOMMON", name: "Uncommon" }, inventory_type: { type: slot, name: slot } });
+    const state = { character: { class: { name: "Mage" }, gear: { back: row("Back", 2580, "Cape"), foot: row("Feet", 2569, "Linen Boots"), hand: row("Hands", 4307, "Gloves"), leg: row("Legs", 4309, "Britches"), mainHand: row("Main Hand", 1, "Staff") } } };
+    expect(gearFromJson(state).equipped.map((g) => g.slot)).toEqual(["Back", "Feet", "Hands", "Legs", "Main Hand"]);
+  });
+});
