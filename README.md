@@ -29,6 +29,7 @@ people "know" is really Classic 1.12 carried over.
 | `search_game` | Find items, quests, NPCs, zones, spells by name | |
 | `item_lookup` | One item's stats and drops, merged from all sources | |
 | `compare_items` | Rank gear for your class and spec with stat weights, showing the maths | |
+| `find_items` | Every Forever item by slot, type, level and quality, ranked for your class and spec, with the gain over what you wear | |
 | `character_lookup` | Read a character's level, specs and equipped gear | Blizzard key |
 | `talent_tree` | A class's Forever talent trees and starter builds | |
 | `talent_points_by_level` | Points available at a level (with the Legacy "Talented" perk) | |

@@ -4,6 +4,7 @@ import { kbText, kbFiles, sources, sourceRef } from "./kb.js";
 import { Everloot, EVERLOOT_CREDIT } from "./sources/everloot.js";
 import { ForeverDb, FOREVERDB_CREDIT, FOREVERDB_PATHS } from "./sources/foreverdb.js";
 import type { ForeverDbSite } from "./sources/foreverdb-site.js";
+import { rowToItem, statsForSpec, type ItemCatalog } from "./sources/foreverdb-data.js";
 import { Blizzard, BLIZZARD_CREDIT } from "./sources/blizzard.js";
 import { fetchArmory, armoryUrl } from "./sources/armory.js";
 import type { BrowserWorker } from "@cloudflare/puppeteer";
@@ -12,7 +13,7 @@ import { normaliseStats, scoreStats, weightsFor, specsFor, STAT_KEYS, type Stats
 import * as xp from "./formulas/xp.js";
 import { netAfterCut, formatCopper, AH_CUT } from "./formulas/gold.js";
 
-export const VERSION = "0.3.0";
+export const VERSION = "0.4.0";
 
 const CLASSES = ["warrior", "paladin", "hunter", "rogue", "priest", "shaman", "mage", "warlock", "druid"] as const;
 const classEnum = z.enum(CLASSES);
@@ -28,7 +29,7 @@ Rules for every answer (full text: kb_guide topic "rules"):
 
 Good starting points: character_lookup (if the player gives name + surname), talent_tree, compare_items, levelling_plan, profession_cost. Use the optimize_build prompt for a full review.`;
 
-export interface Deps { everloot: Everloot; foreverdb: ForeverDb; foreverdbSite?: ForeverDbSite; blizzard: Blizzard; browser?: BrowserWorker }
+export interface Deps { everloot: Everloot; foreverdb: ForeverDb; foreverdbSite?: ForeverDbSite; catalog?: ItemCatalog; blizzard: Blizzard; browser?: BrowserWorker }
 
 type Src = { id: string; name: string; url: string; credit?: string };
 
@@ -130,6 +131,11 @@ export function createServer(deps: Deps): McpServer {
         foreverdbItems = await foreverdb.get("items", { q: query, limit }).then((r) => r.data).catch((e: Error) => ({ error: e.message }));
         srcs.push(foreverdbSrc());
         notes.push("Item names are searched in ForeverDB (foreverdbItems).");
+      } else if (deps.catalog && (await deps.catalog.load())) {
+        const found = await deps.catalog.find({ name: query, limit });
+        foreverdbItems = found?.items.map((i) => ({ itemId: i.itemId, name: i.name, quality: i.quality, itemLevel: i.itemLevel, requiredLevel: i.requiredLevel, type: i.type, slot: i.slot }));
+        srcs.push(foreverdbSrc());
+        notes.push(`Item names are searched in ForeverDB's item list (${found?.total ?? 0} matches; foreverdbItems). For upgrades by slot and level use find_items.`);
       } else if (deps.foreverdbSite) {
         const found = await deps.foreverdbSite.search(query, limit).catch((e: Error) => ({ error: e.message }));
         foreverdbItems = "error" in found ? found : found.hits;
@@ -155,6 +161,55 @@ export function createServer(deps: Deps): McpServer {
   }, safe(async ({ itemId }) => {
     const out = await fetchItem(deps, itemId);
     return reply(out);
+  }));
+
+  server.registerTool("find_items", {
+    title: "Find items and upgrades",
+    description: "Search every WoW: Forever item (ForeverDB's item list, Forever client data) by slot, type, required level, quality and name. Give class and spec to keep only gear that class can use and rank it with stat weights; give equippedItemId to see the gain over what's worn. Use with character_lookup to suggest upgrades per slot.",
+    inputSchema: {
+      slot: z.string().optional().describe("e.g. head, neck, shoulder, back, chest, wrist, hands, waist, legs, feet, finger, trinket, main_hand, two_hand, off_hand, ranged, wand."),
+      type: z.string().optional().describe("Armour or weapon type, e.g. cloth, leather, staff, dagger, wand."),
+      name: z.string().optional().describe("Words the name must contain."),
+      minLevel: z.number().int().min(0).max(60).optional().describe("Lowest required level."),
+      maxLevel: z.number().int().min(0).max(60).optional().describe("Highest required level, usually the character's level."),
+      minQuality: z.enum(["poor", "common", "uncommon", "rare", "epic"]).optional(),
+      class: classEnum.optional(),
+      spec: z.string().optional().describe("Spec for stat weights, e.g. 'frost'. Needs class."),
+      equippedItemId: z.number().int().positive().optional().describe("The item worn in that slot now, to show each result's gain over it."),
+      limit: z.number().int().min(1).max(25).default(10),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: true },
+  }, safe(async (a) => {
+    if (!deps.catalog || !(await deps.catalog.load())) return fail("ForeverDB's item list isn't loaded on this server yet. Try again in a minute, or use search_game.");
+    const weights = a.class && a.spec ? weightsFor(a.class, a.spec) : undefined;
+    if (a.class && a.spec && !weights) return fail(`No weights for ${a.class}/${a.spec}. Known specs: ${specsFor(a.class).join(", ")}.`);
+    const quality = a.minQuality ? ["poor", "common", "uncommon", "rare", "epic"].indexOf(a.minQuality) : undefined;
+    const found = await deps.catalog.find({ slot: a.slot, type: a.type, name: a.name, minLevel: a.minLevel, maxLevel: a.maxLevel, minQuality: quality, forClass: a.class, spec: a.spec, weights, limit: a.limit });
+    if (!found) return fail("ForeverDB's item list isn't loaded on this server yet.");
+    let equipped: { itemId: number; name: string; score: number } | undefined;
+    if (a.equippedItemId && weights) {
+      const row = await deps.catalog.get(a.equippedItemId);
+      if (row) equipped = { itemId: row.id, name: row.n, score: Math.round(scoreStats(statsForSpec(row, a.class, a.spec), weights).score * 10) / 10 };
+    }
+    const items = found.items.map((i) => ({
+      ...i, ...(equipped && i.score !== undefined ? { gainOverEquipped: Math.round((i.score - equipped.score) * 10) / 10 } : {}),
+    }));
+    const evidence: Evidence[] = [{ tier: "game_files", note: "ForeverDB item list (Forever client data)" }];
+    if (weights) evidence.push({ tier: "classic_baseline", note: "starter stat weights" });
+    return reply({
+      filters: { slot: a.slot, type: a.type, name: a.name, requiredLevel: [a.minLevel ?? 0, a.maxLevel ?? 60], minQuality: a.minQuality, class: a.class, spec: a.spec },
+      matches: found.total,
+      ...(weights ? { weightsUsed: weights } : {}),
+      ...(equipped ? { equipped } : {}),
+      items,
+      confidence: weights ? derived(evidence, "stat-weight score (formula: sum of stat x weight)") : single(evidence[0]),
+      sources: [foreverdbSrc(), ...(weights ? [{ ...sourceRef("classic_baseline"), url: "kb/formulas/stat-weights.yaml" }] : [])],
+      notes: [
+        "Stats are from the Forever client as ForeverDB lists them; where an item drops or who sells it is on its url, or via item_lookup.",
+        ...(a.class ? ["Usable gear follows Classic 1.12 armour and weapon skills (low confidence for Forever)."] : []),
+        ...(weights ? ["Scores use Classic-derived levelling weights (formula: sum of stat x weight); bonus damage of other spell schools isn't counted for this spec."] : []),
+      ],
+    });
   }));
 
   server.registerTool("talent_tree", {
@@ -702,9 +757,18 @@ async function fetchItem(deps: Deps, itemId: number): Promise<Record<string, unk
     srcs.push(foreverdbSrc());
   } else if (fdb && "error" in fdb) notes.push(fdb.error);
 
-  // No API key: read ForeverDB's public item page instead (stats from the Forever client).
+  // No API key: ForeverDB's item list (all stats, no page fetch), else its public item page.
   let siteItem: Awaited<ReturnType<ForeverDbSite["item"]>> | undefined;
-  if (!fdb && deps.foreverdbSite) {
+  const row = !fdb && deps.catalog ? await deps.catalog.get(itemId).catch(() => undefined) : undefined;
+  let catalogItem: ReturnType<typeof rowToItem> | undefined;
+  if (row) {
+    catalogItem = rowToItem(row);
+    name = catalogItem.name;
+    stats = { ...catalogItem.stats };
+    if (Object.keys(stats).length) statsFrom = "foreverdb";
+    evidence.push({ tier: "game_files", note: "ForeverDB item list (Forever client data)" });
+    srcs.push({ ...foreverdbSrc(), url: catalogItem.url });
+  } else if (!fdb && deps.foreverdbSite) {
     siteItem = await deps.foreverdbSite.item(itemId).catch((e: Error) => { notes.push(e.message); return undefined; });
     if (siteItem) {
       name = siteItem.name ?? name;
@@ -746,6 +810,7 @@ async function fetchItem(deps: Deps, itemId: number): Promise<Record<string, unk
   if (!name && category) notes.push("The item exists in the game files, but no player has reported its name yet.");
   return {
     itemId, name: name ?? null, ...(category ? { category } : {}),
+    ...(catalogItem ? { quality: catalogItem.quality, itemLevel: catalogItem.itemLevel, requiredLevel: catalogItem.requiredLevel, type: catalogItem.type, slot: catalogItem.slot, damage: catalogItem.damage, statLines: catalogItem.statLines, newInForever: catalogItem.newInForever, changedFromClassic: catalogItem.changedFromClassic } : {}),
     ...(siteItem ? { quality: siteItem.quality, itemLevel: siteItem.itemLevel, requiredLevel: siteItem.requiredLevel, slot: siteItem.slot, armorType: siteItem.armorType, damage: siteItem.damage, source: siteItem.source } : {}),
     stats, statsFrom,
     ...(drops ? { drops } : {}),
