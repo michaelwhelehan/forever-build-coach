@@ -1,0 +1,9 @@
+## Interface: 16001
+## Title: Forever Build Coach
+## Notes: Copy your equipped gear in one line, then ask your Claude (with the Forever Build Coach connector) for upgrades. Type /fbc.
+## Author: Forever Build Coach
+## Version: 0.1.0
+## X-License: MIT
+## AddonCompartmentFunc: ForeverBuildCoach_OnAddonCompartmentClick
+
+ForeverBuildCoach.lua

@@ -3,6 +3,8 @@ import { createServer, VERSION, type Deps } from "./server.js";
 import { Everloot, EVERLOOT_URL } from "./sources/everloot.js";
 import { ForeverDb } from "./sources/foreverdb.js";
 import { ForeverDbSite } from "./sources/foreverdb-site.js";
+import { ItemCatalog } from "./sources/foreverdb-data.js";
+import { Guides } from "./sources/guides.js";
 import { Blizzard } from "./sources/blizzard.js";
 import type { KvLike } from "./cache.js";
 
@@ -15,6 +17,8 @@ export interface Env {
   EVERLOOT_URL?: string;
   FOREVERDB_BASE?: string;
   FOREVERDB_SITE?: string;
+  /** ForeverDB's public item list; default https://foreverdb.net/data/items.json. Set to "off" to disable. */
+  FOREVERDB_ITEMS_URL?: string;
   EVERLOOT_HOURLY_BUDGET?: string;
   /** Optional Cloudflare Browser Rendering binding: reads gear from the armory page without a Battle.net key. */
   BROWSER?: import("@cloudflare/puppeteer").BrowserWorker;
@@ -25,7 +29,7 @@ export interface Env {
 // Built once per Worker instance and reused across requests, so the in-memory cache survives between calls.
 let cached: { key: string; deps: Deps } | undefined;
 export function depsFor(env: Env): Deps {
-  const key = [env.EVERLOOT_URL, env.FOREVERDB_API_KEY, env.FOREVERDB_BASE, env.FOREVERDB_SITE, env.BLIZZARD_CLIENT_ID, env.EVERLOOT_HOURLY_BUDGET, Boolean(env.CACHE), Boolean(env.BROWSER)].join("|");
+  const key = [env.EVERLOOT_URL, env.FOREVERDB_API_KEY, env.FOREVERDB_BASE, env.FOREVERDB_SITE, env.FOREVERDB_ITEMS_URL, env.BLIZZARD_CLIENT_ID, env.EVERLOOT_HOURLY_BUDGET, Boolean(env.CACHE), Boolean(env.BROWSER)].join("|");
   if (cached?.key !== key) {
     cached = {
       key,
@@ -33,6 +37,8 @@ export function depsFor(env: Env): Deps {
         everloot: new Everloot(env.EVERLOOT_URL || EVERLOOT_URL, env.CACHE, Number(env.EVERLOOT_HOURLY_BUDGET || 180)),
         foreverdb: new ForeverDb(env.FOREVERDB_API_KEY || undefined, env.FOREVERDB_BASE || undefined, env.CACHE),
         foreverdbSite: new ForeverDbSite(env.FOREVERDB_SITE || undefined, env.CACHE),
+        catalog: env.FOREVERDB_ITEMS_URL === "off" ? undefined : new ItemCatalog(env.CACHE, env.FOREVERDB_ITEMS_URL || "https://foreverdb.net/data/items.json"),
+        guides: new Guides(env.CACHE, env.BROWSER),
         blizzard: new Blizzard(env.BLIZZARD_CLIENT_ID || undefined, env.BLIZZARD_CLIENT_SECRET || undefined),
         browser: env.BROWSER,
       },
