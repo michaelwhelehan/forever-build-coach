@@ -1,5 +1,5 @@
 import puppeteer, { type BrowserWorker } from "@cloudflare/puppeteer";
-import { parseArmoryPage, gearFromJson, shapeOf, type ArmoryCharacter, type ArmoryGear } from "./armory.js";
+import { parseArmoryPage, gearFromJson, mergeGear, shapeOf, type ArmoryCharacter, type ArmoryGear } from "./armory.js";
 
 // Analytics and ads keep the network busy forever, so they're blocked rather than waited for.
 const BLOCKED_HOST = /googletagmanager|google-analytics|doubleclick|facebook|twitter|hotjar|optimizely|onetrust|cookielaw|bat\.bing|scorecardresearch/i;
@@ -70,24 +70,31 @@ export async function renderArmory(binding: BrowserWorker, url: string): Promise
     const html = await page.content();
     const text = String(await page.evaluate(`(document.querySelector("main") || document.body).innerText`)).replace(/\n{3,}/g, "\n\n").trim();
     const parsed = parseArmoryPage(html, url);
-    if (parsed.equipped.length) parsed.gearSource = "embedded page data (rendered in a browser)";
-    else {
-      for (const j of json) {
-        const g = gearFromJson(j.body);
-        if (g.equipped.length) { parsed.equipped = g.equipped; parsed.class = parsed.class ?? g.class; parsed.gearSource = `the page's own data request ${j.url}`; break; }
-      }
+    // Gear can come from the embedded data and from the page's own requests; join them, one item per slot.
+    const fetched = json.map((j) => ({ url: j.url, ...gearFromJson(j.body) })).filter((g) => g.equipped.length);
+    const fromEmbedded = parsed.equipped.length;
+    parsed.equipped = mergeGear([parsed.equipped, ...fetched.map((g) => g.equipped)]);
+    parsed.class = parsed.class ?? fetched.find((g) => g.class)?.class;
+    if (parsed.equipped.length) {
+      parsed.gearSource = [fromEmbedded ? "embedded page data" : "", ...fetched.map((g) => `the page's data request ${g.url}`)].filter(Boolean).join(" + ") + " (rendered in a browser)";
     }
-    if (!parsed.equipped.length) {
-      const dom = (await page.evaluate(DOM_GEAR).catch(() => [])) as (ArmoryGear & { text?: string })[];
-      if (dom.length) {
-        parsed.equipped = dom.map((d) => ({ ...d, stats: {} }));
-        parsed.gearSource = "item links drawn on the page (names and ids only; look stats up with item_lookup, or read them from renderedText)";
-      }
+    // Items drawn on the page fill any slot the data missed (names and ids only).
+    const dom = ((await page.evaluate(DOM_GEAR).catch(() => [])) as (ArmoryGear & { text?: string })[]).map((d) => ({ ...d, stats: {} }));
+    const known = new Set(parsed.equipped.map((g) => g.itemId).filter(Boolean));
+    const extra = dom.filter((d) => d.itemId && !known.has(d.itemId));
+    if (!parsed.equipped.length && dom.length) {
+      parsed.equipped = dom;
+      parsed.gearSource = "item links drawn on the page (names and ids only; look stats up with item_lookup, or read them from renderedText)";
+    } else if (extra.length) {
+      parsed.equipped = [...parsed.equipped, ...extra.map(({ text, ...g }) => ({ ...g, slot: g.slot ?? "unknown (drawn on the page)" }))];
+      parsed.gearSource += " + item links drawn on the page";
     }
     parsed.debug = {
+      gearListSizes: [...(parsed.debug?.gearListSizes ?? []), ...fetched.flatMap((g) => g.lists)],
       stateShapes: [...(parsed.debug?.stateShapes ?? []), ...json.map((j) => ({ fetched: j.url, shape: shapeOf(j.body, 0, 4) }))],
       urls: parsed.debug?.urls ?? [],
       requests: requests.slice(0, 60),
+      domItems: dom.map((d) => `${d.itemId ?? "?"} ${d.name ?? ""} [${d.slot ?? "?"}]`),
     };
     const statless = parsed.equipped.every((g) => !Object.keys(g.stats).length);
     return { ...parsed, jsonResponses: json.length, renderedText: statless ? text.slice(0, 6000) : undefined };

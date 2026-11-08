@@ -24,6 +24,9 @@ const ALIASES: Record<string, StatKey> = {
   dodge: "dodge", dodgechance: "dodge",
   block: "block", blockchance: "block", blockvalue: "block",
   dps: "weapon_dps", weapondps: "weapon_dps", weapon_dps: "weapon_dps", damagepersecond: "weapon_dps",
+  // School damage ("+10 Frost Damage Done") counts as spell power for a caster of that school; close enough for levelling.
+  frostdamagedone: "sp", firedamagedone: "sp", arcanedamagedone: "sp", shadowdamagedone: "sp", naturedamagedone: "sp", holydamagedone: "sp",
+  frostspelldamage: "sp", firespelldamage: "sp", arcanespelldamage: "sp", shadowspelldamage: "sp", naturespelldamage: "sp", holyspelldamage: "sp",
   defenserating: "def", dodgerating: "dodge", blockrating: "block", parryrating: "dodge", parry: "dodge",
 };
 

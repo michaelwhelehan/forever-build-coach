@@ -3,6 +3,7 @@ import { z } from "zod";
 import { kbText, kbFiles, sources, sourceRef } from "./kb.js";
 import { Everloot, EVERLOOT_CREDIT } from "./sources/everloot.js";
 import { ForeverDb, FOREVERDB_CREDIT, FOREVERDB_PATHS } from "./sources/foreverdb.js";
+import type { ForeverDbSite } from "./sources/foreverdb-site.js";
 import { Blizzard, BLIZZARD_CREDIT } from "./sources/blizzard.js";
 import { fetchArmory, armoryUrl } from "./sources/armory.js";
 import type { BrowserWorker } from "@cloudflare/puppeteer";
@@ -27,7 +28,7 @@ Rules for every answer (full text: kb_guide topic "rules"):
 
 Good starting points: character_lookup (if the player gives name + surname), talent_tree, compare_items, levelling_plan, profession_cost. Use the optimize_build prompt for a full review.`;
 
-export interface Deps { everloot: Everloot; foreverdb: ForeverDb; blizzard: Blizzard; browser?: BrowserWorker }
+export interface Deps { everloot: Everloot; foreverdb: ForeverDb; foreverdbSite?: ForeverDbSite; blizzard: Blizzard; browser?: BrowserWorker }
 
 type Src = { id: string; name: string; url: string; credit?: string };
 
@@ -93,7 +94,7 @@ export function createServer(deps: Deps): McpServer {
         topic,
         version: VERSION,
         everloot: { connected: true, callsLeftThisHour: everloot.budget.remaining() },
-        foreverdb: { enabled: foreverdb.enabled, note: foreverdb.enabled ? undefined : "Add FOREVERDB_API_KEY to unlock full item stats, class abilities and patch changes." },
+        foreverdb: { enabled: foreverdb.enabled, publicPages: Boolean(deps.foreverdbSite), note: foreverdb.enabled ? undefined : "Item names and stats come from ForeverDB's public pages. Add FOREVERDB_API_KEY for class abilities, recipes and patch changes too." },
         blizzard: { enabled: blizzard.enabled, note: blizzard.enabled ? undefined : "Add BLIZZARD_CLIENT_ID and BLIZZARD_CLIENT_SECRET to read characters' equipped gear." },
       });
       default: return reply({ topic, files: kbFiles() });
@@ -123,15 +124,17 @@ export function createServer(deps: Deps): McpServer {
       hits = (wide?.structured?.hits as Record<string, unknown>[] | undefined) ?? [];
       if (hits.length) notes.push("Nothing matched in Everloot's Forever data, so these hits come from every version. gameVersion 'lore' or 'classic' (often the 2023 Warcraft Wiki) is a Classic baseline, not confirmed for Forever (low confidence). A wiki page's extId is not an item id.");
     }
-    if (!kind || kind === "item") {
-      notes.push(foreverdb.enabled
-        ? "Item names are searched in ForeverDB (foreverdbItems)."
-        : "Everloot can't search items by name yet: it knows Forever items by id only. Searching items by name needs a ForeverDB key (FOREVERDB_API_KEY). Meanwhile, item_lookup takes an id, and the everloot tool's item_categories lists ids by type and slot (e.g. class 'weapons', subclass 'wands').");
-    }
     let foreverdbItems: unknown;
-    if (foreverdb.enabled && (!kind || kind === "item")) {
-      foreverdbItems = await foreverdb.get("items", { q: query, limit }).then((r) => r.data).catch((e: Error) => ({ error: e.message }));
-      srcs.push(foreverdbSrc());
+    if (!kind || kind === "item") {
+      if (foreverdb.enabled) {
+        foreverdbItems = await foreverdb.get("items", { q: query, limit }).then((r) => r.data).catch((e: Error) => ({ error: e.message }));
+        srcs.push(foreverdbSrc());
+        notes.push("Item names are searched in ForeverDB (foreverdbItems).");
+      } else if (deps.foreverdbSite) {
+        foreverdbItems = await deps.foreverdbSite.search(query, limit).catch((e: Error) => ({ error: e.message }));
+        srcs.push(foreverdbSrc());
+        notes.push("Item names are searched in ForeverDB's public item list (foreverdbItems). Pass an itemId to item_lookup or compare_items for its stats.");
+      } else notes.push("Everloot can't search items by name: it knows Forever items by id only.");
     }
     return reply({
       query,
@@ -344,7 +347,8 @@ export function createServer(deps: Deps): McpServer {
       equipped: page.equipped,
       gearSource: page.gearSource,
       ...(page.renderedText ? { renderedText: page.renderedText } : {}),
-      ...((debug || !page.equipped.length) && page.debug ? { pageDebug: capJson(page.debug, 12_000) } : {}),
+      // Always included for now: the armory page's layout is new and still being mapped (fewer slots than the page shows).
+      ...(page.debug ? { pageDebug: capJson(page.debug, debug || !page.equipped.length ? 12_000 : 6_000) } : {}),
       confidence: single({ tier: "official", note: "parsed from Blizzard's public armory page; updates when the character logs out" }),
       sources: [{ id: "blizzard_armory", name: "World of Warcraft Forever armory", url: page.url, credit: BLIZZARD_CREDIT }],
       notes,
@@ -697,6 +701,20 @@ async function fetchItem(deps: Deps, itemId: number): Promise<Record<string, unk
     srcs.push(foreverdbSrc());
   } else if (fdb && "error" in fdb) notes.push(fdb.error);
 
+  // No API key: read ForeverDB's public item page instead (stats from the Forever client).
+  let siteItem: Awaited<ReturnType<ForeverDbSite["item"]>> | undefined;
+  if (!fdb && deps.foreverdbSite) {
+    siteItem = await deps.foreverdbSite.item(itemId).catch((e: Error) => { notes.push(e.message); return undefined; });
+    if (siteItem) {
+      name = siteItem.name ?? name;
+      stats = { ...siteItem.stats };
+      if (Object.keys(stats).length) statsFrom = "foreverdb";
+      evidence.push({ tier: "game_files", note: `ForeverDB item page${siteItem.build ? `, build ${siteItem.build}` : ""}` });
+      srcs.push({ ...foreverdbSrc(), url: siteItem.url });
+      if (siteItem.otherLines.length) notes.push(`Not scored: ${siteItem.otherLines.join("; ")}.`);
+    }
+  }
+
   let drops: unknown;
   let url: string | undefined;
   if (ev && !("error" in ev)) {
@@ -723,12 +741,12 @@ async function fetchItem(deps: Deps, itemId: number): Promise<Record<string, unk
     srcs.push(everlootSrc(url));
   } else if (ev && "error" in ev) notes.push(ev.error);
 
-  if (statsFrom === "none") notes.push(deps.foreverdb.enabled
-    ? "No stats found from any source yet."
-    : "No stats yet: players haven't reported this item to Everloot. Full game-file stats for every item need a ForeverDB key (FOREVERDB_API_KEY).");
+  if (statsFrom === "none") notes.push("No stats found from any source yet.");
   if (!name && category) notes.push("The item exists in the game files, but no player has reported its name yet.");
   return {
-    itemId, name: name ?? null, ...(category ? { category } : {}), stats, statsFrom,
+    itemId, name: name ?? null, ...(category ? { category } : {}),
+    ...(siteItem ? { quality: siteItem.quality, itemLevel: siteItem.itemLevel, requiredLevel: siteItem.requiredLevel, slot: siteItem.slot, armorType: siteItem.armorType, damage: siteItem.damage, source: siteItem.source } : {}),
+    stats, statsFrom,
     ...(drops ? { drops } : {}),
     ...(foreverdbItem ? { foreverdbItem } : {}),
     confidence: evidence.length ? agree(evidence) : { label: "low", score: 0, reasons: ["no source has this item"] },

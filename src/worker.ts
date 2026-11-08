@@ -2,6 +2,7 @@ import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/
 import { createServer, VERSION, type Deps } from "./server.js";
 import { Everloot, EVERLOOT_URL } from "./sources/everloot.js";
 import { ForeverDb } from "./sources/foreverdb.js";
+import { ForeverDbSite } from "./sources/foreverdb-site.js";
 import { Blizzard } from "./sources/blizzard.js";
 import type { KvLike } from "./cache.js";
 
@@ -13,6 +14,7 @@ export interface Env {
   BLIZZARD_CLIENT_SECRET?: string;
   EVERLOOT_URL?: string;
   FOREVERDB_BASE?: string;
+  FOREVERDB_SITE?: string;
   EVERLOOT_HOURLY_BUDGET?: string;
   /** Optional Cloudflare Browser Rendering binding: reads gear from the armory page without a Battle.net key. */
   BROWSER?: import("@cloudflare/puppeteer").BrowserWorker;
@@ -23,13 +25,14 @@ export interface Env {
 // Built once per Worker instance and reused across requests, so the in-memory cache survives between calls.
 let cached: { key: string; deps: Deps } | undefined;
 export function depsFor(env: Env): Deps {
-  const key = [env.EVERLOOT_URL, env.FOREVERDB_API_KEY, env.FOREVERDB_BASE, env.BLIZZARD_CLIENT_ID, env.EVERLOOT_HOURLY_BUDGET, Boolean(env.CACHE), Boolean(env.BROWSER)].join("|");
+  const key = [env.EVERLOOT_URL, env.FOREVERDB_API_KEY, env.FOREVERDB_BASE, env.FOREVERDB_SITE, env.BLIZZARD_CLIENT_ID, env.EVERLOOT_HOURLY_BUDGET, Boolean(env.CACHE), Boolean(env.BROWSER)].join("|");
   if (cached?.key !== key) {
     cached = {
       key,
       deps: {
         everloot: new Everloot(env.EVERLOOT_URL || EVERLOOT_URL, env.CACHE, Number(env.EVERLOOT_HOURLY_BUDGET || 180)),
         foreverdb: new ForeverDb(env.FOREVERDB_API_KEY || undefined, env.FOREVERDB_BASE || undefined, env.CACHE),
+        foreverdbSite: new ForeverDbSite(env.FOREVERDB_SITE || undefined, env.CACHE),
         blizzard: new Blizzard(env.BLIZZARD_CLIENT_ID || undefined, env.BLIZZARD_CLIENT_SECRET || undefined),
         browser: env.BROWSER,
       },
@@ -55,7 +58,7 @@ export default {
     const deps = depsFor(env);
 
     if (url.pathname === "/health") {
-      return Response.json({ ok: true, version: VERSION, everlootCallsLeftThisInstance: deps.everloot.budget.remaining(), sharedCache: Boolean(env.CACHE), foreverdb: deps.foreverdb.enabled, blizzard: deps.blizzard.enabled, browserRendering: Boolean(env.BROWSER), accessTokenRequired: Boolean(env.ACCESS_TOKEN) });
+      return Response.json({ ok: true, version: VERSION, everlootCallsLeftThisInstance: deps.everloot.budget.remaining(), sharedCache: Boolean(env.CACHE), foreverdb: deps.foreverdb.enabled, foreverdbPages: Boolean(deps.foreverdbSite), blizzard: deps.blizzard.enabled, browserRendering: Boolean(env.BROWSER), accessTokenRequired: Boolean(env.ACCESS_TOKEN) });
     }
     if (url.pathname === "/" ) {
       return new Response(`Forever Build Coach ${VERSION}\nMCP endpoint: POST /mcp${env.ACCESS_TOKEN ? "/<access-token>" : ""}\nHealth: /health\n`, { headers: { "content-type": "text/plain" } });

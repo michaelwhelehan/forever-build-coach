@@ -1,6 +1,6 @@
 {
   "name": "forever-build-coach",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "MCP server on Cloudflare Workers that helps optimise WoW: Forever character builds while levelling",
   "scripts": {
     "kb:bundle": "node scripts/bundle-kb.mjs",

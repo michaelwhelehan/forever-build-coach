@@ -23,7 +23,7 @@ export interface ArmoryCharacter {
   gearSource: string;
   embeddedStateFound: boolean;
   /** Outline of the page's embedded data and URLs in it, to find where gear lives when parsing fails. */
-  debug?: { stateShapes: unknown[]; urls: string[]; requests?: string[] };
+  debug?: { gearListSizes?: number[]; stateShapes: unknown[]; urls: string[]; requests?: string[]; domItems?: string[] };
 }
 
 const decode = (s: string) =>
@@ -144,10 +144,27 @@ function gearRow(e: Record<string, unknown>): ArmoryGear {
 }
 
 /** Gear and class from one JSON document (embedded state or a fetched response). */
-export function gearFromJson(state: unknown): { equipped: ArmoryGear[]; class?: string } {
+/** Join gear lists (a page can split gear into columns, or keep weapons apart), one item per slot, bigger lists first. */
+export function mergeGear(lists: ArmoryGear[][]): ArmoryGear[] {
+  const out: ArmoryGear[] = [];
+  const seen = new Set<string>();
+  for (const list of [...lists].sort((a, b) => b.length - a.length)) {
+    for (const g of list) {
+      const key = g.slot ? `slot:${g.slot.toLowerCase().replace(/[\s_-]/g, "")}` : `item:${g.itemId ?? g.name}`;
+      if (seen.has(key) || (g.itemId && seen.has(`id:${g.itemId}`) && !g.slot)) continue;
+      seen.add(key);
+      if (g.itemId) seen.add(`id:${g.itemId}`);
+      out.push(g);
+    }
+  }
+  return out;
+}
+
+export function gearFromJson(state: unknown): { equipped: ArmoryGear[]; class?: string; lists: number[] } {
   const arrays = findGearArrays(state);
   return {
-    equipped: arrays.length ? arrays.sort((a, b) => b.length - a.length)[0].map(gearRow) : [],
+    equipped: mergeGear(arrays.map((a) => a.map(gearRow))),
+    lists: arrays.map((a) => a.length),
     class: str(findFirst(state, ["character_class", "class", "playableClass"])),
   };
 }
@@ -157,19 +174,22 @@ export function parseArmoryPage(html: string, url: string): ArmoryCharacter {
   const title = meta(html, "og:title")?.replace(/ - Character - WoW$/i, "") ?? html.match(/<title>([^<]*)<\/title>/i)?.[1]?.replace(/ - Character$/i, "");
   const fromMeta = parseDescription(desc);
   const states = embeddedStates(html);
-  let equipped: ArmoryGear[] = [];
+  const lists: ArmoryGear[][] = [];
+  const listSizes: number[] = [];
   let cls = fromMeta.class;
-  for (const s of states) {
-    const g = gearFromJson(s);
-    if (g.equipped.length && !equipped.length) equipped = g.equipped;
+  for (const st of states) {
+    const g = gearFromJson(st);
+    if (g.equipped.length) lists.push(g.equipped);
+    listSizes.push(...g.lists);
     cls = cls ?? g.class;
   }
+  const equipped = mergeGear(lists);
   return {
     url, title: title ? decode(title) : undefined, ...fromMeta, class: cls,
     equipped,
     gearSource: equipped.length ? "embedded page data" : states.length ? "page data found, but no equipment in it" : "no gear on the page (it loads gear in the browser)",
     embeddedStateFound: states.length > 0,
-    debug: { stateShapes: states.map((st) => shapeOf(st)), urls: [...urlsIn(states)].slice(0, 60) },
+    debug: { gearListSizes: listSizes, stateShapes: states.map((st) => shapeOf(st)), urls: [...urlsIn(states)].slice(0, 60) },
   };
 }
 
