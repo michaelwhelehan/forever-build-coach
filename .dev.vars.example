@@ -1,0 +1,5 @@
+# Copy to .dev.vars for `npm run dev` (never commit it). In production use `npx wrangler secret put`.
+ACCESS_TOKEN=dev-token
+FOREVERDB_API_KEY=
+BLIZZARD_CLIENT_ID=
+BLIZZARD_CLIENT_SECRET=

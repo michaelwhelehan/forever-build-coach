@@ -1,29 +1,47 @@
-/** A small in-memory TTL cache that also merges identical calls that are still in flight. */
+/** The slice of Workers KV this server uses. Optional: without it, caching is per Worker instance. */
+export interface KvLike {
+  get(key: string, type: "json"): Promise<unknown>;
+  put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void>;
+}
+
+/**
+ * Two-layer cache: memory in this Worker instance, then Workers KV shared by every instance.
+ * Identical calls still in flight are merged.
+ */
 export class TtlCache {
   private store = new Map<string, { expires: number; value: unknown }>();
   private inflight = new Map<string, Promise<unknown>>();
-  constructor(private maxEntries = 5000) {}
+  constructor(private kv?: KvLike, private prefix = "c:", private maxEntries = 2000) {}
 
   async get<T>(key: string, ttlMs: number, load: () => Promise<T>): Promise<T> {
     const hit = this.store.get(key);
     if (hit && hit.expires > Date.now()) return hit.value as T;
     const running = this.inflight.get(key);
     if (running) return running as Promise<T>;
-    const p = load()
-      .then((value) => {
-        if (this.store.size >= this.maxEntries) this.store.delete(this.store.keys().next().value as string);
-        this.store.set(key, { expires: Date.now() + ttlMs, value });
-        return value;
-      })
-      .finally(() => this.inflight.delete(key));
+    const p = (async () => {
+      const kvKey = this.prefix + key.slice(0, 480);
+      if (this.kv) {
+        const shared = (await this.kv.get(kvKey, "json").catch(() => null)) as { expires: number; value: T } | null;
+        if (shared && shared.expires > Date.now()) { this.remember(key, shared.expires, shared.value); return shared.value; }
+      }
+      const value = await load();
+      const expires = Date.now() + ttlMs;
+      this.remember(key, expires, value);
+      // KV needs a TTL of at least 60 seconds.
+      if (this.kv) await this.kv.put(kvKey, JSON.stringify({ expires, value }), { expirationTtl: Math.max(60, Math.ceil(ttlMs / 1000)) }).catch(() => undefined);
+      return value;
+    })().finally(() => this.inflight.delete(key));
     this.inflight.set(key, p);
     return p;
   }
 
-  clear() { this.store.clear(); }
+  private remember(key: string, expires: number, value: unknown) {
+    if (this.store.size >= this.maxEntries) this.store.delete(this.store.keys().next().value as string);
+    this.store.set(key, { expires, value });
+  }
 }
 
-/** Counts calls in a rolling hour so a shared upstream limit is never crossed. */
+/** Counts calls in a rolling hour (per Worker instance) as a brake on bursts. */
 export class HourlyBudget {
   private calls: number[] = [];
   constructor(public limit: number) {}

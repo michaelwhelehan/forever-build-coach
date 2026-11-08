@@ -9,7 +9,7 @@ export class BlizzardError extends Error {}
 export class Blizzard {
   private token?: { value: string; expires: number };
   private cache = new TtlCache();
-  constructor(private id = process.env.BLIZZARD_CLIENT_ID, private secret = process.env.BLIZZARD_CLIENT_SECRET) {}
+  constructor(private id?: string, private secret?: string) {}
 
   get enabled() { return Boolean(this.id && this.secret); }
 
@@ -17,7 +17,7 @@ export class Blizzard {
     if (this.token && this.token.expires > Date.now() + 60_000) return this.token.value;
     const res = await fetch("https://oauth.battle.net/token", {
       method: "POST",
-      headers: { authorization: `Basic ${Buffer.from(`${this.id}:${this.secret}`).toString("base64")}`, "content-type": "application/x-www-form-urlencoded" },
+      headers: { authorization: `Basic ${btoa(`${this.id}:${this.secret}`)}`, "content-type": "application/x-www-form-urlencoded" },
       body: "grant_type=client_credentials",
     });
     if (!res.ok) throw new BlizzardError(`Battle.net login failed (${res.status}). Check BLIZZARD_CLIENT_ID and BLIZZARD_CLIENT_SECRET.`);

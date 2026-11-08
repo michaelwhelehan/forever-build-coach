@@ -1,6 +1,6 @@
-import { TtlCache, HOUR } from "../cache.js";
+import { TtlCache, HOUR, type KvLike } from "../cache.js";
 
-export const FOREVERDB_BASE = process.env.FOREVERDB_BASE ?? "https://foreverdb.net/api/v1";
+export const FOREVERDB_BASE = "https://foreverdb.net/api/v1";
 export const FOREVERDB_CREDIT = "Data from ForeverDB.net (https://foreverdb.net)";
 
 /** Paths we allow through the raw tool: read-only endpoints from ForeverDB's developer page. */
@@ -15,8 +15,10 @@ const PATH_RE = new RegExp(`^(${FOREVERDB_PATHS.map((p) => p.replace(/\{[a-z]+\}
 export class ForeverDbError extends Error {}
 
 export class ForeverDb {
-  private cache = new TtlCache();
-  constructor(private key = process.env.FOREVERDB_API_KEY, private base = FOREVERDB_BASE) {}
+  private cache: TtlCache;
+  constructor(private key?: string, private base = FOREVERDB_BASE, kv?: KvLike) {
+    this.cache = new TtlCache(kv, "foreverdb:");
+  }
 
   get enabled() { return Boolean(this.key); }
 
@@ -27,7 +29,7 @@ export class ForeverDb {
     const url = new URL(`${this.base}/${clean}`);
     for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== "") url.searchParams.set(k, String(v));
     return this.cache.get(url.toString(), ttl, async () => {
-      const res = await fetch(url, { headers: { "X-API-Key": this.key!, accept: "application/json", "user-agent": "forever-build-coach/0.1" } });
+      const res = await fetch(url, { headers: { "X-API-Key": this.key!, accept: "application/json", "user-agent": "forever-build-coach/0.2" } });
       if (res.status === 429) throw new ForeverDbError(`ForeverDB rate limit hit; retry after ${res.headers.get("retry-after") ?? "a minute"} seconds.`);
       if (res.status === 404) throw new ForeverDbError(`ForeverDB has nothing at ${clean}.`);
       if (!res.ok) throw new ForeverDbError(`ForeverDB answered ${res.status} for ${clean}.`);

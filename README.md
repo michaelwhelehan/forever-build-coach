@@ -54,28 +54,40 @@ Ask whoever hosts the server for the URL. It looks like `https://<host>/mcp/<acc
 Then just ask, for example: *"I'm a level 24 fury warrior, Thrall Stormborn on EU. What should I upgrade
 first?"* or *"Is grinding or questing faster for me from 30 to 32?"*
 
-## Host it
+## Host it on Cloudflare Workers
 
-It is a small stateless Node server, so the free tiers of most hosts are enough.
+It is a small stateless Worker, so the free plan is plenty for a group of friends.
 
-**Render (easiest):** New → Blueprint → pick this repo. `render.yaml` sets it up and generates an
-`ACCESS_TOKEN`. Add the optional keys in the dashboard.
+**Option A: deploy from GitHub (no command line).**
+1. In the Cloudflare dashboard go to Workers & Pages → Create → Import a repository, and pick this repo.
+   Leave the build settings as they are (it runs `npx wrangler deploy`, which bundles `kb/` first).
+2. In the Worker's Settings → Variables and Secrets, add `ACCESS_TOKEN` as a secret (any long random string).
+   Add the optional keys below if you have them.
+3. Every merge to `main` now redeploys automatically.
 
-**Fly.io:** `fly launch --copy-config --no-deploy`, then `fly secrets set ACCESS_TOKEN=$(openssl rand -hex 16)`,
-then `fly deploy`.
+**Option B: from your computer.**
+```
+npm install
+npx wrangler login
+npx wrangler secret put ACCESS_TOKEN
+npm run deploy
+```
 
-**Anywhere with Docker:** `docker build -t forever-coach . && docker run -p 3000:3000 -e ACCESS_TOKEN=... forever-coach`
+**Recommended: a shared cache.** Run `npx wrangler kv namespace create CACHE`, paste the id into the
+commented block in `wrangler.toml`, and redeploy. Without it each Worker instance caches on its own,
+so Everloot gets asked the same thing more often.
 
-**Locally:** `npm install && npm run build && ACCESS_TOKEN=... npm start`
+Your connector URL is then `https://forever-build-coach.<your-subdomain>.workers.dev/mcp/<ACCESS_TOKEN>`.
+Check `https://…workers.dev/health` to see which data sources are switched on.
 
-### Settings
+### Settings (Worker secrets)
 
-| Variable | Why |
+| Name | Why |
 |---|---|
 | `ACCESS_TOKEN` | Shared secret in the connector URL. Without it anyone with the URL can use your server. |
 | `FOREVERDB_API_KEY` | Full item stats, class abilities, recipes, buffs and nerfs. Request at https://foreverdb.net/developers (log in with Battle.net). |
 | `BLIZZARD_CLIENT_ID`, `BLIZZARD_CLIENT_SECRET` | Read characters' equipped gear. Free at https://develop.battle.net/access/clients. |
-| `EVERLOOT_HOURLY_BUDGET` | Default 180. Everloot allows 200 calls an hour per IP, shared by everyone on this server. Answers are cached (talent trees 12 h, items 2 h, prices 30 min). |
+| `EVERLOOT_HOURLY_BUDGET` | Optional, default 180 per Worker instance. Everloot allows 200 calls an hour per IP. Answers are cached (talent trees 12 h, items 2 h, prices 30 min). |
 
 ## The knowledge base
 
@@ -98,6 +110,7 @@ then `fly deploy`.
 
 ```
 npm install
-npm test          # unit tests + an end-to-end test against fake Everloot and ForeverDB servers
-npm run dev       # watch mode on :3000
+npm test          # unit tests + an end-to-end test of the Worker against fake Everloot and ForeverDB
+npm run dev       # local Worker on :8787 (copy .dev.vars.example to .dev.vars first)
+npm run check     # what CI runs: typecheck, tests, Wrangler dry-run build
 ```

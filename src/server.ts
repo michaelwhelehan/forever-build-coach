@@ -9,7 +9,7 @@ import { normaliseStats, scoreStats, weightsFor, specsFor, STAT_KEYS, type Stats
 import * as xp from "./formulas/xp.js";
 import { netAfterCut, formatCopper, AH_CUT } from "./formulas/gold.js";
 
-export const VERSION = "0.1.0";
+export const VERSION = "0.2.0";
 
 const CLASSES = ["warrior", "paladin", "hunter", "rogue", "priest", "shaman", "mage", "warlock", "druid"] as const;
 const classEnum = z.enum(CLASSES);

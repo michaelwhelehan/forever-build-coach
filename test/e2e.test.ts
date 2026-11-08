@@ -1,15 +1,11 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import express from "express";
-import type { Server as HttpServer } from "node:http";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { createApp } from "../src/index.js";
-import { Everloot } from "../src/sources/everloot.js";
-import { ForeverDb } from "../src/sources/foreverdb.js";
-import { Blizzard } from "../src/sources/blizzard.js";
+import worker, { type Env } from "../src/worker.js";
+import type { KvLike } from "../src/cache.js";
 
 // A stand-in for Everloot's public MCP, answering in the shapes of its published schemas.
 const calls: string[] = [];
@@ -31,55 +27,61 @@ const FAKE: Record<string, (a: Record<string, unknown>) => Record<string, unknow
   recent_changes: () => ({ posts: [] }),
 };
 
-function fakeEverloot() {
-  const app = express();
-  app.use(express.json());
-  app.post("/mcp/public", async (req, res) => {
-    const server = new Server({ name: "fake-everloot", version: "0" }, { capabilities: { tools: {} } });
-    server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: Object.keys(FAKE).map((name) => ({ name, inputSchema: { type: "object" as const } })) }));
-    server.setRequestHandler(CallToolRequestSchema, async (r) => {
-      calls.push(r.params.name);
-      const f = FAKE[r.params.name];
-      if (!f) return { content: [{ type: "text", text: "unknown tool" }], isError: true };
-      const structured = f((r.params.arguments ?? {}) as Record<string, unknown>);
-      return { content: [{ type: "text", text: JSON.stringify(structured) }], structuredContent: structured };
-    });
-    const t = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
-    await server.connect(t);
-    await t.handleRequest(req, res, req.body);
+async function fakeEverloot(req: Request): Promise<Response> {
+  const server = new Server({ name: "fake-everloot", version: "0" }, { capabilities: { tools: {} } });
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: Object.keys(FAKE).map((name) => ({ name, inputSchema: { type: "object" as const } })) }));
+  server.setRequestHandler(CallToolRequestSchema, async (r) => {
+    calls.push(r.params.name);
+    const f = FAKE[r.params.name];
+    if (!f) return { content: [{ type: "text", text: "unknown tool" }], isError: true };
+    const structured = f((r.params.arguments ?? {}) as Record<string, unknown>);
+    return { content: [{ type: "text", text: JSON.stringify(structured) }], structuredContent: structured };
   });
-  return app;
+  // Like the real one: stateless, answers as server-sent events.
+  const t = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+  await server.connect(t);
+  return t.handleRequest(req);
 }
 
-function fakeForeverDb() {
-  const app = express();
-  app.get("/api/v1/items/:id", (req, res) => {
-    if (req.header("x-api-key") !== "fdb_test") return res.status(401).end();
-    res.json({ data: { id: Number(req.params.id), name: "Sturdy Axe", stats: [{ type: "Strength", value: 8 }, { type: "Stamina", value: 3 }], dps: 14 }, meta: { build: "1.60.1.70862" } });
-  });
-  return app;
+function fakeForeverDb(req: Request): Response {
+  const id = new URL(req.url).pathname.split("/").pop();
+  if (req.headers.get("x-api-key") !== "fdb_test") return new Response(null, { status: 401 });
+  return Response.json({ data: { id: Number(id), name: "Sturdy Axe", stats: [{ type: "Strength", value: 8 }, { type: "Stamina", value: 3 }], dps: 14 }, meta: { build: "1.60.1.70862" } });
 }
 
-let upstream: HttpServer, fdb: HttpServer, ours: HttpServer, base: string;
-const listen = (app: express.Express) => new Promise<HttpServer>((r) => { const s = app.listen(0, "127.0.0.1", () => r(s)); });
-const port = (s: HttpServer) => (s.address() as { port: number }).port;
+class MemoryKv implements KvLike {
+  data = new Map<string, string>();
+  async get(key: string) { const v = this.data.get(key); return v === undefined ? null : JSON.parse(v); }
+  async put(key: string, value: string) { this.data.set(key, value); }
+}
 
-beforeAll(async () => {
-  upstream = await listen(fakeEverloot());
-  fdb = await listen(fakeForeverDb());
-  const deps = {
-    everloot: new Everloot(`http://127.0.0.1:${port(upstream)}/mcp/public`),
-    foreverdb: new ForeverDb("fdb_test", `http://127.0.0.1:${port(fdb)}/api/v1`),
-    blizzard: new Blizzard(undefined, undefined),
-  };
-  ours = await listen(createApp(deps, "secret-token"));
-  base = `http://127.0.0.1:${port(ours)}`;
+const kv = new MemoryKv();
+const env: Env = {
+  ACCESS_TOKEN: "secret-token",
+  EVERLOOT_URL: "https://everloot.test/mcp/public",
+  FOREVERDB_API_KEY: "fdb_test",
+  FOREVERDB_BASE: "https://foreverdb.test/api/v1",
+  CACHE: kv,
+};
+const base = "https://coach.test";
+const realFetch = globalThis.fetch;
+
+beforeAll(() => {
+  // Outgoing calls from the Worker go to the fakes.
+  vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    const req = new Request(input, init);
+    if (req.url.startsWith("https://everloot.test/")) return fakeEverloot(req);
+    if (req.url.startsWith("https://foreverdb.test/")) return fakeForeverDb(req);
+    return realFetch(req);
+  });
 });
-afterAll(() => { upstream?.close(); fdb?.close(); ours?.close(); });
+afterAll(() => vi.unstubAllGlobals());
+
+const callWorker = (input: RequestInfo | URL, init?: RequestInit) => worker.fetch(new Request(input, init), env);
 
 async function connect(path: string) {
   const c = new Client({ name: "test", version: "0" });
-  await c.connect(new StreamableHTTPClientTransport(new URL(base + path)));
+  await c.connect(new StreamableHTTPClientTransport(new URL(base + path), { fetch: callWorker }));
   return c;
 }
 const json = (r: unknown) => JSON.parse(((r as { content: { text: string }[] }).content[0]).text);
@@ -116,6 +118,10 @@ describe("end to end", () => {
     expect(r.ranking[0].vsFirstListed.startsWith("+")).toBe(true);
     expect(r.confidence.label).toBe("low"); // starter weights are a Classic baseline
     await c.close();
+  });
+
+  it("shares cached answers through KV", async () => {
+    expect([...kv.data.keys()].some((k) => k.startsWith("everloot:item_page"))).toBe(true);
   });
 
   it("caches Everloot calls", async () => {
@@ -158,8 +164,13 @@ describe("end to end", () => {
     await c.close();
   });
 
+  it("serves health without a token", async () => {
+    const res = await callWorker(`${base}/health`);
+    expect(await res.json()).toMatchObject({ ok: true, sharedCache: true, foreverdb: true, blizzard: false });
+  });
+
   it("accepts a bearer token too", async () => {
-    const res = await fetch(`${base}/mcp`, { method: "POST", headers: { authorization: "Bearer secret-token", "content-type": "application/json", accept: "application/json, text/event-stream" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "kb_guide", arguments: { topic: "status" } } }) });
+    const res = await callWorker(`${base}/mcp`, { method: "POST", headers: { authorization: "Bearer secret-token", "content-type": "application/json", accept: "application/json, text/event-stream" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "kb_guide", arguments: { topic: "status" } } }) });
     expect(res.status).toBe(200);
   });
 });
