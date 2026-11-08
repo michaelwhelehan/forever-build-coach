@@ -133,7 +133,7 @@ export function createServer(deps: Deps): McpServer {
       } else if (deps.foreverdbSite) {
         const found = await deps.foreverdbSite.search(query, limit).catch((e: Error) => ({ error: e.message }));
         foreverdbItems = "error" in found ? found : found.hits;
-        if (!("error" in found) && !found.hits.length) notes.push(`No name match among the ${found.indexed} items read from ForeverDB's item list (first few: ${found.sample.join("; ")}).`);
+        if (!("error" in found) && !found.hits.length) notes.push(`No name match. Without a key only ForeverDB's ${found.indexed} featured items can be searched by name (the full list loads from their API). If you know an item's id, item_lookup reads its page directly; a FOREVERDB_API_KEY unlocks full name search.`);
         srcs.push(foreverdbSrc());
         notes.push("Item names are searched in ForeverDB's public item list (foreverdbItems). Pass an itemId to item_lookup or compare_items for its stats.");
       } else notes.push("Everloot can't search items by name: it knows Forever items by id only.");
@@ -349,8 +349,7 @@ export function createServer(deps: Deps): McpServer {
       equipped: page.equipped,
       gearSource: page.gearSource,
       ...(page.renderedText ? { renderedText: page.renderedText } : {}),
-      // Always included for now: the armory page's layout is new and still being mapped (fewer slots than the page shows).
-      ...(page.debug ? { pageDebug: capJson(page.debug, debug || !page.equipped.length ? 12_000 : 6_000) } : {}),
+      ...((debug || !page.equipped.length) && page.debug ? { pageDebug: capJson(page.debug, 12_000) } : {}),
       confidence: single({ tier: "official", note: "parsed from Blizzard's public armory page; updates when the character logs out" }),
       sources: [{ id: "blizzard_armory", name: "World of Warcraft Forever armory", url: page.url, credit: BLIZZARD_CREDIT }],
       notes,
