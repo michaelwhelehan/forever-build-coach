@@ -5,7 +5,7 @@ import { Everloot, EVERLOOT_CREDIT } from "./sources/everloot.js";
 import { ForeverDb, FOREVERDB_CREDIT, FOREVERDB_PATHS } from "./sources/foreverdb.js";
 import type { ForeverDbSite } from "./sources/foreverdb-site.js";
 import { rowToItem, statsForSpec, type ItemCatalog } from "./sources/foreverdb-data.js";
-import { guideUrl, pickSections, type Guides } from "./sources/guides.js";
+import { guideUrl, pickSections, professionGuideUrl, parseSkillSteps, stepsFrom, foreverdbGuideUrl, FOREVERDB_GUIDES, type Guides } from "./sources/guides.js";
 import { parseExport, SLOT_FOR_SEARCH, EXPORT_SLOTS } from "./addon-export.js";
 import { Blizzard, BLIZZARD_CREDIT } from "./sources/blizzard.js";
 import { fetchArmory, armoryUrl } from "./sources/armory.js";
@@ -30,7 +30,7 @@ Rules for every answer (full text: kb_guide topic "rules"):
 5. Show the inputs when a recommendation rests on a formula (stat score, XP/hour, gold/hour).
 6. Name every item as a link to its "url" (ForeverDB's page), e.g. [Woolen Boots](https://foreverdb.net/item/2583), so players can click through.
 
-Good starting points: character_lookup (if the player gives name + surname), gear_upgrades (the in-game addon's FBC1 line, or character_lookup's gear), find_items, levelling_guide ("what next", "which talent"), talent_tree, levelling_plan, profession_cost. Use the optimize_build prompt for a full review.`;
+Good starting points: character_lookup (if the player gives name + surname), gear_upgrades (the in-game addon's FBC1 line, or character_lookup's gear), find_items, levelling_guide ("what next", "which talent"), profession_guide (what to craft next), gold_guide, talent_tree, levelling_plan, profession_cost. Use the optimize_build prompt for a full review.`;
 
 export interface Deps { everloot: Everloot; foreverdb: ForeverDb; foreverdbSite?: ForeverDbSite; catalog?: ItemCatalog; guides?: Guides; blizzard: Blizzard; browser?: BrowserWorker }
 
@@ -305,6 +305,67 @@ export function createServer(deps: Deps): McpServer {
       notes: [
         "Quote only what answers the question and link the guide for the rest; the text is Icy Veins' work.",
         "Check talent advice against talent_tree: Forever's trees can change with patches.",
+      ],
+    });
+  }));
+
+  server.registerTool("profession_guide", {
+    title: "Profession levelling guide",
+    description: "What to craft next to level a profession (tailoring, enchanting, alchemy, ...), from ForeverDB's step-by-step WoW: Forever route: the skill range, recipe, how many to make, reagents, when to train, plus its shopping list. Give your current skill to get the next steps. Gathering professions (herbalism, mining, skinning) may have node maps instead.",
+    inputSchema: {
+      profession: z.string().min(3).max(40).describe("e.g. 'tailoring', 'enchanting', 'first aid'."),
+      skill: z.number().int().min(1).max(375).optional().describe("Current skill, to start the route from there."),
+      steps: z.number().int().min(1).max(12).default(4).describe("How many steps to return."),
+      question: z.string().max(300).optional().describe("e.g. 'shopping list', 'trainer', 'best in slot'."),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: true },
+  }, safe(async ({ profession, skill, steps: count, question }) => {
+    if (!deps.guides) return fail("Guides aren't set up on this server.");
+    const url = professionGuideUrl(profession);
+    const g = await deps.guides.get(url);
+    const route = parseSkillSteps(g);
+    const next = stepsFrom(route, skill ?? 1, count);
+    const src = { ...foreverdbSrc(), url };
+    return reply({
+      guide: g.title ?? url, url,
+      fromSkill: skill ?? 1,
+      nextSteps: next.map((s) => ({ skill: `${s.from}-${s.to}`, step: s.text })),
+      routeSteps: route.length,
+      ...(question || !route.length ? { matches: pickSections(g, question ?? profession, undefined, 2) } : {}),
+      otherSections: g.sections.map((s) => s.heading),
+      confidence: single({ tier: "community_guide", note: `ForeverDB's route (recipes from game files), read ${g.fetchedAt.slice(0, 10)}` }),
+      sources: [src],
+      notes: [
+        route.length ? "Each step: craft until the end of its skill range; recipes go grey, so the counts are estimates." : "This page had no skill-range steps this server could read; the matching sections are below.",
+        "The page shows the Alliance route by default; trainer locations can differ for Horde.",
+        "Reagent prices: market_price (auction scans can be missing for Forever, so prices may be unknown).",
+      ],
+    });
+  }));
+
+  server.registerTool("gold_guide", {
+    title: "Gold guide",
+    description: "How to make gold in WoW: Forever: ForeverDB's guides on the auction house, what sells at low levels (cloth, leather, ore, herbs, meat, with where they drop), and which professions earn most by class. Returns the sections that answer the question, with the link. Pair with farm_value and market_price when prices exist.",
+    inputSchema: {
+      question: z.string().max(300).optional().describe("e.g. 'what sells at level 15', 'auction house cut', 'best farm for a mage'."),
+      guide: z.enum(FOREVERDB_GUIDES).default("making-money").describe("making-money, professions, or best-professions-by-class."),
+      level: z.number().int().min(1).max(60).optional(),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: true },
+  }, safe(async ({ question, guide, level }) => {
+    if (!deps.guides) return fail("Guides aren't set up on this server.");
+    const url = foreverdbGuideUrl(guide);
+    const g = await deps.guides.get(url);
+    return reply({
+      guide: g.title ?? url, url,
+      matches: pickSections(g, question, level),
+      otherSections: g.sections.map((s) => s.heading),
+      otherGuides: FOREVERDB_GUIDES.filter((x) => x !== guide).map(foreverdbGuideUrl),
+      confidence: single({ tier: "community_guide", note: `ForeverDB guide, read ${g.fetchedAt.slice(0, 10)}` }),
+      sources: [{ ...foreverdbSrc(), url }],
+      notes: [
+        "ForeverDB wrote the money guide before launch, so it has no real auction prices or gold-per-hour figures.",
+        "For gold per hour, ask the player what they gather per hour and use farm_value; unknown prices stay unknown.",
       ],
     });
   }));
@@ -730,7 +791,7 @@ export function createServer(deps: Deps): McpServer {
       ...(foreverdbRecipes !== undefined ? { foreverdbRecipes } : {}),
       confidence: steps.length ? single({ tier: "player_observed", reporters: Number.isFinite(minReporters) ? minReporters : 3, thin: missing > 0 }) : single({ tier: "classic_baseline", note: "no agreed path yet" }),
       sources: [everlootSrc(ev.structured?.url as string | undefined), ...(foreverdbRecipes ? [foreverdbSrc()] : [])],
-      notes: ["Costs are reagent prices at time of the scan. Gathering mats yourself makes it cheaper; use farm_value to see what that time is worth."],
+      notes: ["Costs are reagent prices at time of the scan. Gathering mats yourself makes it cheaper; use farm_value to see what that time is worth.", "For the step-by-step route (what to craft at each skill), use profession_guide, which works even when this path has gaps."],
     });
   }));
 

@@ -24,6 +24,7 @@
     its rules "don't restrict apps, addons or tools"; /api/ is disallowed). Cached a day, at most 600 pages an hour.
     The full item list with stats comes from the public file https://foreverdb.net/data/items.json (the one
     their site loads), fetched at most once a day and kept in Workers KV. It is never copied into this repo.
+    Profession routes (/profession/{name}/leveling) and guides (/guide/{slug}) are read on request and cached a day.
   limits: 60 requests per minute, 10,000 per day per key.
   licence: Data extracted from the Forever client (Blizzard's). Must credit "Data from ForeverDB.net" with a link.
   covers: Items with full stats, spells, quests, vendors, dungeons, zones, classes (abilities, ranks,
