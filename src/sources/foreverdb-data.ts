@@ -14,7 +14,7 @@ const DAY = 86_400_000;
 export interface Row {
   id: number; n: string; q: number; il: number; rl: number; c: number; sc: number; inv: number;
   st?: [number, number][]; ar?: number; dmg?: [number, number, number]; spd?: number;
-  cls?: number; new?: unknown; chg?: Record<string, unknown>; set?: unknown; b?: number; spec?: string[];
+  cls?: number; el?: number; new?: unknown; chg?: Record<string, unknown>; set?: unknown; b?: number; spec?: string[];
 }
 
 const QUALITY = ["Poor", "Common", "Uncommon", "Rare", "Epic", "Legendary", "Artifact", "Heirloom"];
@@ -73,10 +73,18 @@ const CLASS_BIT: Record<string, number> = { warrior: 1, paladin: 2, hunter: 4, r
 export interface CatalogItem {
   itemId: number; name: string; quality: string; itemLevel: number; requiredLevel: number;
   type: string; slot?: string; stats: Stats; statLines: string[];
-  damage?: { min: number; max: number; speed: number }; newInForever?: boolean; changedFromClassic?: boolean; url: string;
+  requiredLevelEstimated?: boolean; damage?: { min: number; max: number; speed: number }; newInForever?: boolean; changedFromClassic?: boolean; url: string;
 }
 
 export function slotName(r: Row) { return SLOT[r.inv]; }
+
+/**
+ * The level needed to equip an item. Many rows (raid rewards, and Forever's new items, which carry rl 1)
+ * don't say; new items carry "el", the level they're meant for. Otherwise it's estimated as item level - 5,
+ * the usual gap, so a level 60 raid epic never shows up as a level 1 upgrade.
+ */
+export const reqLevel = (r: Pick<Row, "rl" | "il" | "el">): number =>
+  Math.max(1, r.rl ?? 0, r.el ?? 0, (r.rl ?? 0) <= 1 ? (r.il ?? 1) - 5 : 0);
 
 export function rowToItem(r: Row): CatalogItem {
   const stats: Stats = {};
@@ -94,7 +102,7 @@ export function rowToItem(r: Row): CatalogItem {
   }
   const type = r.c === 2 ? WEAPON[r.sc] || "Weapon" : r.c === 4 ? ARMOR[r.sc] || "Armor" : "Other";
   return {
-    itemId: r.id, name: r.n, quality: QUALITY[r.q] ?? String(r.q), itemLevel: r.il, requiredLevel: r.rl, type, slot: slotName(r),
+    itemId: r.id, name: r.n, quality: QUALITY[r.q] ?? String(r.q), itemLevel: r.il, requiredLevel: reqLevel(r), ...(reqLevel(r) !== r.rl ? { requiredLevelEstimated: true } : {}), type, slot: slotName(r),
     stats, statLines, ...(damage ? { damage } : {}),
     ...(r.new ? { newInForever: true } : {}), ...(r.chg ? { changedFromClassic: true } : {}),
     url: `https://foreverdb.net/item/${r.id}`,
@@ -181,8 +189,8 @@ export class ItemCatalog {
       && words.every((w) => r.n.toLowerCase().includes(w))
       && (!slots || slots.includes(r.inv))
       && (!type || (r.c === 2 ? WEAPON[r.sc] : r.c === 4 ? ARMOR[r.sc] : "").toLowerCase().includes(type))
-      && (o.minLevel === undefined || r.rl >= o.minLevel)
-      && (o.maxLevel === undefined || r.rl <= o.maxLevel)
+      && (o.minLevel === undefined || reqLevel(r) >= o.minLevel)
+      && (o.maxLevel === undefined || reqLevel(r) <= o.maxLevel)
       && (o.minQuality === undefined || r.q >= o.minQuality)
       && (!o.forClass || canUse(r, o.forClass)));
     let items: (CatalogItem & { score?: number })[];

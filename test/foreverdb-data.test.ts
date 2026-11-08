@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ItemCatalog, rowToItem, validateRows, type Row } from "../src/sources/foreverdb-data.js";
+import { ItemCatalog, rowToItem, validateRows, reqLevel, type Row } from "../src/sources/foreverdb-data.js";
 import { weightsFor } from "../src/formulas/stats.js";
 
 // Rows copied from ForeverDB's items.json (2026-11-08).
@@ -42,5 +42,15 @@ describe("ForeverDB item list", () => {
   it("rejects a file that isn't the full list", () => {
     expect(() => validateRows({})).toThrow(/array/);
     expect(() => validateRows(ROWS)).toThrow(/expected/);
+  });
+});
+
+describe("required level", () => {
+  it("estimates a missing required level, so raid and new Forever gear aren't level 1 upgrades", () => {
+    expect(reqLevel({ rl: 0, il: 66 })).toBe(61);
+    expect(reqLevel({ rl: 14, il: 19 })).toBe(14);
+    expect(reqLevel({ rl: 0, il: 3 })).toBe(1);
+    expect(reqLevel({ rl: 1, il: 55, el: 50 })).toBe(50); // Forever's new items say rl 1
+    expect(reqLevel({ rl: 1, il: 5 })).toBe(1);
   });
 });

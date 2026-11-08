@@ -4,7 +4,7 @@ import { kbText, kbFiles, sources, sourceRef } from "./kb.js";
 import { Everloot, EVERLOOT_CREDIT } from "./sources/everloot.js";
 import { ForeverDb, FOREVERDB_CREDIT, FOREVERDB_PATHS } from "./sources/foreverdb.js";
 import type { ForeverDbSite } from "./sources/foreverdb-site.js";
-import { rowToItem, statsForSpec, type ItemCatalog } from "./sources/foreverdb-data.js";
+import { rowToItem, statsForSpec, reqLevel, type ItemCatalog } from "./sources/foreverdb-data.js";
 import { guideUrl, pickSections, professionGuideUrl, parseSkillSteps, stepsFrom, foreverdbGuideUrl, FOREVERDB_GUIDES, type Guides } from "./sources/guides.js";
 import { parseExport, SLOT_FOR_SEARCH, EXPORT_SLOTS } from "./addon-export.js";
 import { Blizzard, BLIZZARD_CREDIT } from "./sources/blizzard.js";
@@ -249,7 +249,7 @@ export function createServer(deps: Deps): McpServer {
     const catalog = deps.catalog;
     const scoreOf = async (id: number) => {
       const row = id ? await catalog.get(id) : undefined;
-      return row ? { itemId: row.id, name: row.n, url: itemUrl(row.id), slot: rowToItem(row).slot, requiredLevel: row.rl, score: Math.round(scoreStats(statsForSpec(row, cls, a.spec), weights).score * 10) / 10 } : undefined;
+      return row ? { itemId: row.id, name: row.n, url: itemUrl(row.id), slot: rowToItem(row).slot, requiredLevel: reqLevel(row), score: Math.round(scoreStats(statsForSpec(row, cls, a.spec), weights).score * 10) / 10 } : undefined;
     };
     const mainHand = worn.MAINHAND ? await catalog.get(worn.MAINHAND) : undefined;
     const twoHanded = mainHand?.inv === 17;
