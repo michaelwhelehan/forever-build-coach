@@ -30,7 +30,9 @@ people "know" is really Classic 1.12 carried over.
 | `item_lookup` | One item's stats and drops, merged from all sources | |
 | `compare_items` | Rank gear for your class and spec with stat weights, showing the maths | |
 | `find_items` | Every Forever item by slot, type, level and quality, ranked for your class and spec, with the gain over what you wear | |
-| `character_lookup` | Read a character's level, specs and equipped gear | Blizzard key |
+| `gear_upgrades` | Upgrades for every slot from the in-game addon's export line (or a list of item ids), biggest gain first, with ForeverDB links | |
+| `levelling_guide` | Answers "what next?" and "which talent next?" from Icy Veins' Forever levelling guide for your class and spec | |
+| `character_lookup` | Read a character's level, specs and equipped gear from the armory | |
 | `talent_tree` | A class's Forever talent trees and starter builds | |
 | `talent_points_by_level` | Points available at a level (with the Legacy "Talented" perk) | |
 | `class_races` | Which races can be a class, with racials | |
@@ -43,7 +45,17 @@ people "know" is really Classic 1.12 carried over.
 | `confidence_score` | Score a claim with the shared rules | |
 | `everloot`, `foreverdb` | Call any other endpoint of those sources | |
 
+Every item in an answer carries a `url` to its ForeverDB page, so Claude can give clickable links.
+
 There is also a prompt, **Review my build** (`optimize_build`), that walks through all of it.
+
+## In-game addon
+
+WoW addons can't go online, so the addon in [`addon/`](addon/) shows your class, level and equipped
+items as one line. Copy it into Claude and ask for upgrades; it skips the armory and is always current.
+
+1. Copy `addon/ForeverBuildCoach` into your game's `Interface/AddOns/` folder and `/reload`.
+2. Type `/fbc`, press Ctrl+C, and paste the line to Claude: *"Find upgrades for this gear, I'm frost."*
 
 ## Connect your Claude
 

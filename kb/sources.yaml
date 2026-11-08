@@ -78,3 +78,13 @@
   tiers:
     classic_baseline: Assumed to carry over. Always flagged as low confidence.
   checked: 2026-11-08
+
+- id: icy_veins
+  name: Icy Veins WoW Forever levelling guides
+  url: https://www.icy-veins.com/wow-forever/
+  access: Guide pages such as /wow-forever/frost-mage-leveling, read on request by levelling_guide and cached for
+    a day (plain fetch, or Cloudflare Browser Rendering if needed). robots.txt allows /wow-forever/.
+  limits: Copyrighted guide text. Answers quote only the sections a question needs and link the guide. Never copied into this repo.
+  tiers:
+    community_guide: One trusted guide, written for Forever.
+  checked: 2026-11-08

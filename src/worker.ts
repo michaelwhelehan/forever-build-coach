@@ -4,6 +4,7 @@ import { Everloot, EVERLOOT_URL } from "./sources/everloot.js";
 import { ForeverDb } from "./sources/foreverdb.js";
 import { ForeverDbSite } from "./sources/foreverdb-site.js";
 import { ItemCatalog } from "./sources/foreverdb-data.js";
+import { Guides } from "./sources/guides.js";
 import { Blizzard } from "./sources/blizzard.js";
 import type { KvLike } from "./cache.js";
 
@@ -37,6 +38,7 @@ export function depsFor(env: Env): Deps {
         foreverdb: new ForeverDb(env.FOREVERDB_API_KEY || undefined, env.FOREVERDB_BASE || undefined, env.CACHE),
         foreverdbSite: new ForeverDbSite(env.FOREVERDB_SITE || undefined, env.CACHE),
         catalog: env.FOREVERDB_ITEMS_URL === "off" ? undefined : new ItemCatalog(env.CACHE, env.FOREVERDB_ITEMS_URL || "https://foreverdb.net/data/items.json"),
+        guides: new Guides(env.CACHE, env.BROWSER),
         blizzard: new Blizzard(env.BLIZZARD_CLIENT_ID || undefined, env.BLIZZARD_CLIENT_SECRET || undefined),
         browser: env.BROWSER,
       },

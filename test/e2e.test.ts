@@ -207,6 +207,8 @@ describe("end to end", () => {
     const s = json(await c.callTool({ name: "search_game", arguments: { query: "woolen", kind: "item" } }));
     expect(s.foreverdbItems[0]).toMatchObject({ itemId: 2583, name: "Woolen Boots" });
     expect([...kv.data.keys()]).toContain("foreverdb-data:items");
+    const up = json(await c.callTool({ name: "gear_upgrades", arguments: { export: "FBC1:MAGE:15:Uzal:FEET=2569;HEAD=0", spec: "frost", slots: ["FEET"] } }));
+    expect(up.bySlot[0]).toMatchObject({ slot: "FEET", equipped: { name: "Linen Boots", url: "https://foreverdb.net/item/2569" }, upgrades: [{ name: "Woolen Boots", url: "https://foreverdb.net/item/2583" }] });
     await c.close();
   });
 
