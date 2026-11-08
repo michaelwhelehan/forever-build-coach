@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseArmoryPage, parseDescription, armoryUrl } from "../src/sources/armory.js";
+import { parseArmoryPage, parseDescription, armoryUrl, gearFromJson } from "../src/sources/armory.js";
 
 // The head of the real page for Uzal Muzal, 2026-11-08 (its body loads in the browser).
 const REAL_HEAD = `<html><head><title>Uzal Muzal - Character</title>
@@ -35,5 +35,11 @@ describe("armory page", () => {
       { slot: "CHEST", itemId: 2, name: "Ragged Vest", quality: undefined, level: undefined, stats: { sta: 2, armor: 30 } },
     ]);
     expect(c.gearSource).toBe("embedded page data");
+  });
+
+  it("reads gear from a JSON response the page fetched", () => {
+    const res = { equipped_items: [{ slot: { type: "HEAD", name: "Head" }, item: { id: 10 }, name: "Leather Cap", stats: [{ type: { type: "AGILITY", name: "Agility" }, value: 3 }] }], character_class: { name: "Rogue" } };
+    expect(gearFromJson(res)).toEqual({ class: "Rogue", equipped: [{ slot: "Head", itemId: 10, name: "Leather Cap", quality: undefined, level: undefined, stats: { agi: 3 } }] });
+    expect(gearFromJson({ unrelated: [1, 2, 3] }).equipped).toEqual([]);
   });
 });

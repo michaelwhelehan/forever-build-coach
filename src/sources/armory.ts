@@ -111,6 +111,15 @@ function gearRow(e: Record<string, unknown>): ArmoryGear {
   };
 }
 
+/** Gear and class from one JSON document (embedded state or a fetched response). */
+export function gearFromJson(state: unknown): { equipped: ArmoryGear[]; class?: string } {
+  const arrays = findGearArrays(state);
+  return {
+    equipped: arrays.length ? arrays.sort((a, b) => b.length - a.length)[0].map(gearRow) : [],
+    class: str(findFirst(state, ["character_class", "class", "playableClass"])),
+  };
+}
+
 export function parseArmoryPage(html: string, url: string): ArmoryCharacter {
   const desc = meta(html, "description") ?? meta(html, "og:description") ?? "";
   const title = meta(html, "og:title")?.replace(/ - Character - WoW$/i, "") ?? html.match(/<title>([^<]*)<\/title>/i)?.[1]?.replace(/ - Character$/i, "");
@@ -119,9 +128,9 @@ export function parseArmoryPage(html: string, url: string): ArmoryCharacter {
   let equipped: ArmoryGear[] = [];
   let cls = fromMeta.class;
   for (const s of states) {
-    const arrays = findGearArrays(s);
-    if (arrays.length && !equipped.length) equipped = arrays.sort((a, b) => b.length - a.length)[0].map(gearRow);
-    cls = cls ?? str(findFirst(s, ["character_class", "class", "playableClass"]));
+    const g = gearFromJson(s);
+    if (g.equipped.length && !equipped.length) equipped = g.equipped;
+    cls = cls ?? g.class;
   }
   return {
     url, title: title ? decode(title) : undefined, ...fromMeta, class: cls,
