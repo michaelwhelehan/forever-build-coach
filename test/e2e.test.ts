@@ -72,6 +72,8 @@ beforeAll(() => {
     const req = new Request(input, init);
     if (req.url.startsWith("https://everloot.test/")) return fakeEverloot(req);
     if (req.url.startsWith("https://foreverdb.test/")) return fakeForeverDb(req);
+    if (req.url === "https://foreverdb-site.test/items") return new Response('<ul><li><a href="/item/11287">Lesser Magic Wand</a> (item level 15)</li><li><a href="/item/11288">Greater Magic Wand</a> (item level 21)</li><li><a href="/item/2589">Linen Cloth</a> (item level 5)</li></ul>', { headers: { "content-type": "text/html" } });
+    if (req.url === "https://foreverdb-site.test/item/11287") return new Response('<h1>Lesser Magic Wand</h1><p>Uncommon Ranged Wand (item level 15, requires level 5)</p><ul><li>Slot: Ranged (Wand)</li><li>12 - 22 Arcane damage, speed 1.50</li><li>11.3 damage per second</li><li>+1 Spell Power</li></ul>', { headers: { "content-type": "text/html" } });
     if (req.url.startsWith("https://worldofwarcraft.blizzard.com/")) {
       return req.url.endsWith("/uzal-muzal")
         ? new Response('<html><head><meta name="description" content="Uzal - 15 Undead character.class, 7 ilvl"><meta property="og:title" content="Uzal Muzal - Character - WoW"></head><body></body></html>', { headers: { "content-type": "text/html" } })
@@ -169,6 +171,18 @@ describe("end to end", () => {
     const missing = await c.callTool({ name: "character_lookup", arguments: { name: "Nobody", surname: "Here" } });
     expect(missing.isError).toBe(true);
     expect(json(missing).error).toMatch(/level 10/);
+    await c.close();
+  });
+
+  it("reads ForeverDB's public pages when there is no API key", async () => {
+    const keyless: Env = { ...env, FOREVERDB_API_KEY: undefined, FOREVERDB_SITE: "https://foreverdb-site.test" };
+    const c = new Client({ name: "test", version: "0" });
+    await c.connect(new StreamableHTTPClientTransport(new URL(base + "/mcp/secret-token"), { fetch: (i, init) => worker.fetch(new Request(i, init), keyless) }));
+    const s = json(await c.callTool({ name: "search_game", arguments: { query: "magic wand", kind: "item" } }));
+    expect(s.foreverdbItems.map((r: { name: string }) => r.name)).toEqual(["Lesser Magic Wand", "Greater Magic Wand"]);
+    const it = json(await c.callTool({ name: "item_lookup", arguments: { itemId: 11287 } }));
+    expect(it).toMatchObject({ name: "Lesser Magic Wand", requiredLevel: 5, slot: "Ranged", stats: { sp: 1 }, statsFrom: "both" }); // the fake Everloot reports dps 11, and player reports win
+    expect(it.sources[0]).toMatchObject({ id: "foreverdb", url: "https://foreverdb-site.test/item/11287" });
     await c.close();
   });
 
