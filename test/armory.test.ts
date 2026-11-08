@@ -39,7 +39,7 @@ describe("armory page", () => {
 
   it("reads gear from a JSON response the page fetched", () => {
     const res = { equipped_items: [{ slot: { type: "HEAD", name: "Head" }, item: { id: 10 }, name: "Leather Cap", stats: [{ type: { type: "AGILITY", name: "Agility" }, value: 3 }] }], character_class: { name: "Rogue" } };
-    expect(gearFromJson(res)).toEqual({ class: "Rogue", equipped: [{ slot: "Head", itemId: 10, name: "Leather Cap", quality: undefined, level: undefined, stats: { agi: 3 } }] });
+    expect(gearFromJson(res)).toEqual({ class: "Rogue", lists: [1], equipped: [{ slot: "Head", itemId: 10, name: "Leather Cap", quality: undefined, level: undefined, stats: { agi: 3 } }] });
     expect(gearFromJson({ unrelated: [1, 2, 3] }).equipped).toEqual([]);
   });
 
@@ -55,5 +55,18 @@ describe("armory page", () => {
     const state = { character: { name: "Uzal", links: { equipment: "/en-us/forever/eu/armory/character/uzal-muzal/equipment.json", icon: "https://x/y.png" } }, list: [{ a: 1 }, { a: 2 }] };
     expect(shapeOf(state)).toEqual({ character: { name: "Uzal", links: { equipment: "/en-us/forever/eu/armory/character/uzal-muzal/equipment.json", icon: "https://x/y.png" } }, list: ["2 ×", { a: 1 }] });
     expect([...urlsIn(state)]).toEqual(["/en-us/forever/eu/armory/character/uzal-muzal/equipment.json"]);
+  });
+});
+
+describe("gear split across lists", () => {
+  it("joins columns and a separate weapons list, one item per slot", () => {
+    const state = {
+      left: [{ slot: { type: "BACK", name: "Back" }, item: { id: 2580 }, name: "Cape" }, { slot: { type: "CHEST", name: "Chest" }, item: { id: 2578 }, name: "Vest" }],
+      weapons: [{ slot: { type: "MAIN_HAND", name: "Main Hand" }, item: { id: 35 }, name: "Bent Staff" }, { slot: { type: "RANGED", name: "Ranged" }, item: { id: 11288 }, name: "Wand" }],
+      again: [{ slot: { type: "CHEST", name: "Chest" }, item: { id: 2578 }, name: "Vest" }],
+    };
+    const g = gearFromJson(state);
+    expect(g.equipped.map((e) => e.name)).toEqual(["Cape", "Vest", "Bent Staff", "Wand"]);
+    expect(g.lists).toEqual([2, 2, 1]);
   });
 });

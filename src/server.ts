@@ -347,7 +347,8 @@ export function createServer(deps: Deps): McpServer {
       equipped: page.equipped,
       gearSource: page.gearSource,
       ...(page.renderedText ? { renderedText: page.renderedText } : {}),
-      ...((debug || !page.equipped.length) && page.debug ? { pageDebug: capJson(page.debug, 12_000) } : {}),
+      // Always included for now: the armory page's layout is new and still being mapped (fewer slots than the page shows).
+      ...(page.debug ? { pageDebug: capJson(page.debug, debug || !page.equipped.length ? 12_000 : 6_000) } : {}),
       confidence: single({ tier: "official", note: "parsed from Blizzard's public armory page; updates when the character logs out" }),
       sources: [{ id: "blizzard_armory", name: "World of Warcraft Forever armory", url: page.url, credit: BLIZZARD_CREDIT }],
       notes,
