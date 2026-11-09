@@ -65,3 +65,13 @@ describe("profession routes", () => {
     expect(stepsFrom(parseSkillSteps(g), 100)).toEqual([]);
   });
 });
+
+describe("subsections", () => {
+  it("returns a heading's subsections with it", () => {
+    const g = parseGuide(`<main><h2>What sells at levels 1-20</h2><p>Crafters need materials.</p><h3>Cloth</h3><p>Linen Cloth 13c</p><h3>Herbs</h3><p>Peacebloom 10c</p><h2>Timing</h2><p>Weekends.</p></main>`, "https://foreverdb.net/guide/making-money");
+    const m = pickSections(g, "what sells", undefined, 1);
+    expect(m[0].text).toContain("Linen Cloth 13c");
+    expect(m[0].text).toContain("Peacebloom");
+    expect(m[0].text).not.toContain("Weekends");
+  });
+});
