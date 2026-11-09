@@ -263,7 +263,7 @@ export function createServer(deps: Deps): McpServer {
       const upgrades = (found?.items ?? [])
         .filter((i) => !wornIds.has(i.itemId) && (i.score ?? 0) > base)
         .slice(0, a.perSlot)
-        .map((i) => ({ name: i.name, url: i.url, itemId: i.itemId, requiredLevel: i.requiredLevel, quality: i.quality, type: i.type, score: i.score, gain: Math.round(((i.score ?? 0) - base) * 10) / 10, stats: i.statLines }));
+        .map((i) => ({ name: i.name, url: i.url, itemId: i.itemId, requiredLevel: i.requiredLevel, quality: i.quality, type: i.type, score: i.score, gain: Math.round(((i.score ?? 0) - base) * 10) / 10, stats: i.statLines, ...(i.binds ? { binds: i.binds } : {}) }));
       out.push({ slot, equipped: current ?? (worn[slot] ? { itemId: worn[slot], url: itemUrl(worn[slot]), note: "not in ForeverDB's list" } : "empty"), upgrades });
     }
     out.sort((x, y) => (y.upgrades[0]?.gain ?? 0) - (x.upgrades[0]?.gain ?? 0));
@@ -274,7 +274,7 @@ export function createServer(deps: Deps): McpServer {
       confidence: derived([{ tier: "game_files", note: "ForeverDB item list (Forever client data)" }, { tier: "classic_baseline", note: "starter stat weights" }], "stat-weight score (formula: sum of stat x weight)"),
       sources: [foreverdbSrc(), { ...sourceRef("classic_baseline"), url: "kb/formulas/stat-weights.yaml" }],
       notes: [
-        "Slots are sorted by the biggest gain first. Where an item drops, who sells it or how it's crafted is on its url.",
+        "Items that bind on pickup can't be bought on the auction house: the player must loot, earn or craft them (a crafted one needs its pattern, which may bind too). Say so for each.", "Slots are sorted by the biggest gain first. Where an item drops, who sells it or how it's crafted is on its url.",
         "Usable gear follows Classic 1.12 armour and weapon skills; scores use Classic-derived levelling weights (low confidence for Forever).",
         ...(twoHanded ? ["A two-handed weapon is worn, so off-hand upgrades are left out."] : []),
       ],

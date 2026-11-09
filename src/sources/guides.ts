@@ -120,9 +120,16 @@ export function pickSections(g: Guide, question = "", level?: number, max = 3, m
     return { s, score, why };
   });
   const picked = scored.filter((x) => x.score > 0).sort((a, b) => b.score - a.score).slice(0, max);
-  return (picked.length ? picked : scored.slice(0, 1)).map(({ s, why }) => ({
+  // A heading's subsections belong to it, e.g. "What sells at levels 1-20" and its "Cloth" and "Herbs" parts.
+  const withChildren = (s: GuideSection) => {
+    const i = g.sections.indexOf(s);
+    let text = s.text;
+    for (let j = i + 1; j < g.sections.length && g.sections[j].level > s.level; j++) text += `\n## ${g.sections[j].heading}\n${g.sections[j].text}`;
+    return text;
+  };
+  return (picked.length ? picked : scored.slice(0, 1)).map(({ s, why }) => ({ s, why, text: withChildren(s) })).map(({ s, why, text }) => ({
     heading: s.heading,
-    text: s.text.length > maxChars ? `${s.text.slice(0, maxChars)}… (more on the page)` : s.text,
+    text: text.length > maxChars ? `${text.slice(0, maxChars)}… (more on the page)` : text,
     why: why.length ? [...new Set(why)].join(", ") : "start of the guide",
   }));
 }
