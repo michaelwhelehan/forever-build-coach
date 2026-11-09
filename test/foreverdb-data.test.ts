@@ -54,3 +54,11 @@ describe("required level", () => {
     expect(reqLevel({ rl: 1, il: 5 })).toBe(1);
   });
 });
+
+describe("binding", () => {
+  it("says when an item binds on pickup, so players know it isn't on the auction house", () => {
+    const row = { id: 253915, n: "Silky Gloves", q: 3, il: 20, rl: 15, c: 4, sc: 1, inv: 10, b: 1 } as Row;
+    expect(rowToItem(row).binds).toMatch(/on pickup/);
+    expect(rowToItem({ ...row, b: undefined }).binds).toBeUndefined();
+  });
+});

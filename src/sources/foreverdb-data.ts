@@ -73,7 +73,7 @@ const CLASS_BIT: Record<string, number> = { warrior: 1, paladin: 2, hunter: 4, r
 export interface CatalogItem {
   itemId: number; name: string; quality: string; itemLevel: number; requiredLevel: number;
   type: string; slot?: string; stats: Stats; statLines: string[];
-  requiredLevelEstimated?: boolean; damage?: { min: number; max: number; speed: number }; newInForever?: boolean; changedFromClassic?: boolean; url: string;
+  requiredLevelEstimated?: boolean; binds?: string; damage?: { min: number; max: number; speed: number }; newInForever?: boolean; changedFromClassic?: boolean; url: string;
 }
 
 export function slotName(r: Row) { return SLOT[r.inv]; }
@@ -104,6 +104,7 @@ export function rowToItem(r: Row): CatalogItem {
   return {
     itemId: r.id, name: r.n, quality: QUALITY[r.q] ?? String(r.q), itemLevel: r.il, requiredLevel: reqLevel(r), ...(reqLevel(r) !== r.rl ? { requiredLevelEstimated: true } : {}), type, slot: slotName(r),
     stats, statLines, ...(damage ? { damage } : {}),
+    ...(r.b === 1 ? { binds: "on pickup (can't be bought on the auction house)" } : r.b === 2 ? { binds: "when equipped" } : {}),
     ...(r.new ? { newInForever: true } : {}), ...(r.chg ? { changedFromClassic: true } : {}),
     url: `https://foreverdb.net/item/${r.id}`,
   };
