@@ -39,6 +39,17 @@ export class Blizzard {
     });
   }
 
+  /** Uncached read, for big answers like auction house dumps that are summarised by the caller. */
+  async raw(region: Region, path: string, namespace: "profile" | "static" | "dynamic"): Promise<Record<string, unknown>> {
+    if (!this.enabled) throw new BlizzardError("Blizzard API is not set up on this server (no BLIZZARD_CLIENT_ID / BLIZZARD_CLIENT_SECRET).");
+    const url = new URL(`https://${region}.api.blizzard.com${path}`);
+    url.searchParams.set("namespace", `${namespace}-forever-${region}`);
+    url.searchParams.set("locale", "en_US");
+    const res = await fetch(url, { headers: { authorization: `Bearer ${await this.accessToken()}` } });
+    if (!res.ok) throw new BlizzardError(`Blizzard API answered ${res.status} for ${path}.`);
+    return (await res.json()) as Record<string, unknown>;
+  }
+
   /** Forever characters have a first name and a surname instead of a realm. */
   static slug(name: string, surname: string) {
     return `${name}-${surname}`.toLowerCase().normalize("NFC").replace(/\s+/g, "-");

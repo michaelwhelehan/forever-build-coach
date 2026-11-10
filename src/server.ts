@@ -14,8 +14,9 @@ import { agree, derived, single, type Confidence, type Evidence } from "./formul
 import { normaliseStats, scoreStats, weightsFor, specsFor, STAT_KEYS, type Stats } from "./formulas/stats.js";
 import * as xp from "./formulas/xp.js";
 import { netAfterCut, formatCopper, AH_CUT } from "./formulas/gold.js";
+import { AuctionPrices, GROUP_RULESETS, type Faction, type HouseInfo } from "./sources/auctions.js";
 
-export const VERSION = "0.4.0";
+export const VERSION = "0.5.0";
 
 const CLASSES = ["warrior", "paladin", "hunter", "rogue", "priest", "shaman", "mage", "warlock", "druid"] as const;
 const classEnum = z.enum(CLASSES);
@@ -32,7 +33,7 @@ Rules for every answer (full text: kb_guide topic "rules"):
 
 Good starting points: character_lookup (if the player gives name + surname), gear_upgrades (the in-game addon's FBC1 line, or character_lookup's gear), find_items, levelling_guide ("what next", "which talent"), profession_guide (what to craft next), gold_guide, talent_tree, levelling_plan, profession_cost. Use the optimize_build prompt for a full review.`;
 
-export interface Deps { everloot: Everloot; foreverdb: ForeverDb; foreverdbSite?: ForeverDbSite; catalog?: ItemCatalog; guides?: Guides; blizzard: Blizzard; browser?: BrowserWorker }
+export interface Deps { everloot: Everloot; foreverdb: ForeverDb; foreverdbSite?: ForeverDbSite; catalog?: ItemCatalog; guides?: Guides; blizzard: Blizzard; browser?: BrowserWorker; auctions?: AuctionPrices }
 
 type Src = { id: string; name: string; url: string; credit?: string };
 
@@ -703,20 +704,88 @@ export function createServer(deps: Deps): McpServer {
 
   server.registerTool("market_price", {
     title: "Auction house prices",
-    description: "Current market value, minimum buyout and listings for items on a WoW: Forever realm/ruleset, from auction scans players uploaded to Everloot, with what you'd net after the auction house cut.",
+    description: "Live WoW: Forever auction house prices: lowest buyout, market price (average of the cheapest 15% of units), units listed and what you'd net after the cut. Read hourly from Blizzard's API per auction house; give region and faction (Horde, Alliance, or neutral for Blackwater). Falls back to Everloot player scans when Blizzard isn't set up. Use auction_houses to see which house is which.",
     inputSchema: {
-      realm: z.string().describe("Realm or ruleset name as Everloot knows it, e.g. 'PvP' or 'Normal' (Forever has one mega-realm per ruleset)."),
       itemIds: z.array(z.number().int().positive()).min(1).max(10),
+      faction: z.enum(["horde", "alliance", "neutral"]).optional().describe("The character's faction; neutral = Blackwater auction house."),
+      region: z.enum(["eu", "us", "kr", "tw"]).default("eu"),
+      ruleset: z.string().optional().describe("Normal, PvP, Roleplay or Roleplay PvP. Picks the right house once its group is known; until then every group's house for the faction is shown."),
+      houseId: z.number().int().positive().optional().describe("One auction house by id (from auction_houses), instead of faction."),
+      realm: z.string().optional().describe("Old Everloot parameter (ruleset name), used only for the Everloot fallback."),
     },
     annotations: { readOnlyHint: true, openWorldHint: true },
-  }, safe(async ({ realm, itemIds }) => {
-    const rows = await Promise.all(itemIds.map((id) => priceOf(deps, realm, id)));
+  }, safe(async ({ itemIds, faction, region, ruleset, houseId, realm }) => {
+    const ah = deps.auctions;
+    if (ah?.enabled && (faction || houseId)) {
+      const houses = await pickHouses(ah, region, faction, ruleset, houseId);
+      if (!houses.length) return reply({ error: "No auction house matches that.", houses: await ah.houses(region) });
+      const snaps = await Promise.all(houses.map(async (h) => ({ h, snap: await ah.snapshot(region, h.id).catch((e: Error) => e) })));
+      const names = deps.catalog ? await Promise.all(itemIds.map((id) => deps.catalog!.get(id).catch(() => undefined))) : [];
+      const prices = itemIds.map((id, i) => ({
+        itemId: id,
+        name: names[i]?.n,
+        url: `https://foreverdb.net/item/${id}`,
+        byHouse: snaps.map(({ h, snap }) => {
+          const label = houseLabel(region, h);
+          if (snap instanceof Error) return { ...label, error: snap.message };
+          const row = snap.items[String(id)];
+          if (!row) return { ...label, listed: 0, price: "none listed", scannedAt: snap.scannedAt };
+          const [min, market, units, listings] = row;
+          return { ...label, lowest: formatCopper(min), market: formatCopper(market), marketCopper: market, netAfterCut: formatCopper(netAfterCut(market)), unitsListed: units, listings, scannedAt: snap.scannedAt };
+        }),
+      }));
+      const oldest = Math.max(...snaps.map(({ snap }) => (snap instanceof Error ? 0 : (Date.now() - Date.parse(snap.scannedAt)) / 86_400_000)));
+      return reply({
+        region,
+        prices,
+        confidence: single({ tier: "official", ageDays: oldest, note: "live Blizzard auction data" }),
+        sources: [{ ...sourceRef("blizzard"), credit: "Auction data from the Blizzard Battle.net API. World of Warcraft is a trademark of Blizzard Entertainment." }],
+        notes: [
+          `Net = market x ${1 - AH_CUT} (auction house cut, Classic baseline; Blackwater may take more).`,
+          "These are asking prices of current listings, not sale prices. 'none listed' means nobody is selling it right now.",
+          ...(houses.length > 1 ? ["Blizzard's API doesn't say which ruleset each group of houses serves yet, so every group is shown. The player's house is usually the one whose prices match what they see in game; auction_houses lists them."] : []),
+        ],
+      });
+    }
+    const rows = await Promise.all(itemIds.map((id) => priceOf(deps, realm ?? ruleset ?? "Normal", id)));
     return reply({
-      realm,
+      realm: realm ?? ruleset ?? "Normal",
       prices: rows.map((r) => ({ ...r, evidence: undefined })),
       confidence: rows.some((r) => r.evidence) ? agree(rows.flatMap((r) => (r.evidence ? [r.evidence] : []))) : single({ tier: "classic_baseline", note: "no prices recorded" }),
       sources: [everlootSrc()],
-      notes: ["'unknown' means no solid scan in the last 14 days, not that the item is worthless.", `Net = market x ${1 - AH_CUT} (auction house cut).`],
+      notes: [
+        ah?.enabled ? "Give the faction (or a houseId) to get live Blizzard auction prices instead." : "Live Blizzard prices need BLIZZARD_CLIENT_ID / BLIZZARD_CLIENT_SECRET on the server.",
+        "'unknown' means no solid scan in the last 14 days, not that the item is worthless.", `Net = market x ${1 - AH_CUT} (auction house cut).`,
+      ],
+    });
+  }));
+
+  server.registerTool("auction_houses", {
+    title: "Auction houses",
+    description: "The WoW: Forever auction houses in Blizzard's API for a region: id, faction, group (ruleset when known), when prices were last read and how many listings. Give itemId to compare one item's price across every house, which helps tell which house is the player's (e.g. Linen Cloth 2589).",
+    inputSchema: {
+      region: z.enum(["eu", "us", "kr", "tw"]).default("eu"),
+      itemId: z.number().int().positive().optional(),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: true },
+  }, safe(async ({ region, itemId }) => {
+    const ah = deps.auctions;
+    if (!ah?.enabled) return reply({ error: "Blizzard API is not set up on this server, so there's no auction data." });
+    const houses = await ah.houses(region);
+    const rows = await Promise.all(houses.map(async (h) => {
+      const label = houseLabel(region, h);
+      const snap = await ah.snapshot(region, h.id).catch((e: Error) => e);
+      if (snap instanceof Error) return { ...label, error: snap.message };
+      const row = itemId ? snap.items[String(itemId)] : undefined;
+      return {
+        ...label, scannedAt: snap.scannedAt, listings: snap.listings, distinctItems: Object.keys(snap.items).length,
+        ...(itemId ? { item: row ? { lowest: formatCopper(row[0]), market: formatCopper(row[1]), unitsListed: row[2] } : "none listed" } : {}),
+      };
+    }));
+    return reply({
+      region, houses: rows,
+      sources: [{ ...sourceRef("blizzard"), credit: "Auction data from the Blizzard Battle.net API. World of Warcraft is a trademark of Blizzard Entertainment." }],
+      notes: ["Houses come in groups of three (Alliance, Horde, Blackwater), one group per ruleset. Which group is which ruleset isn't in the API yet; groups 4 and 5 are thought to be the two Roleplay rulesets (Forever Mastery)."],
     });
   }));
 
@@ -724,7 +793,10 @@ export function createServer(deps: Deps): McpServer {
     title: "Gold per hour from farming",
     description: "Estimate gold per hour from a farm: give items gathered or looted per hour and the realm; prices come from Everloot auction data (or your own price), minus the auction house cut, plus any vendor trash value.",
     inputSchema: {
-      realm: z.string(),
+      realm: z.string().describe("Ruleset, e.g. 'Normal'."),
+      faction: z.enum(["horde", "alliance", "neutral"]).optional().describe("With region, uses live Blizzard auction prices."),
+      region: z.enum(["eu", "us", "kr", "tw"]).default("eu"),
+      houseId: z.number().int().positive().optional(),
       perHour: z.array(z.object({
         itemId: z.number().int().positive().optional(),
         name: z.string().optional(),
@@ -734,8 +806,13 @@ export function createServer(deps: Deps): McpServer {
       vendorCopperPerHour: z.number().min(0).default(0),
     },
     annotations: { readOnlyHint: true, openWorldHint: true },
-  }, safe(async ({ realm, perHour, vendorCopperPerHour }) => {
+  }, safe(async ({ realm, faction, region, houseId, perHour, vendorCopperPerHour }) => {
     const ev: Evidence[] = [];
+    const ah = deps.auctions;
+    // One house is needed for a single figure: the one asked for, or the faction's house for this ruleset when known.
+    const house = ah?.enabled && (houseId || faction) ? (await pickHouses(ah, region, faction, realm, houseId).catch(() => []))[0] : undefined;
+    const single1 = house && (houseId || GROUP_RULESETS[region]) ? house : undefined;
+    const usedBlizzard = { yes: false };
     const lines = [];
     let total = vendorCopperPerHour;
     let unknown = 0;
@@ -743,7 +820,8 @@ export function createServer(deps: Deps): McpServer {
       let unit: number | null = p.priceCopper ?? null;
       let note: string | undefined;
       if (unit === null && p.itemId) {
-        const pr = await priceOf(deps, realm, p.itemId);
+        const pr = single1 ? await blizzardPrice(ah!, region, single1.id, p.itemId) : await priceOf(deps, realm, p.itemId);
+        if (single1) usedBlizzard.yes = true;
         unit = pr.marketCopper ?? null;
         if (pr.evidence) ev.push(pr.evidence);
         note = pr.note;
@@ -759,9 +837,13 @@ export function createServer(deps: Deps): McpServer {
       goldPerHourCopper: Math.round(total),
       itemsWithoutPrice: unknown,
       lines,
+      ...(single1 ? { auctionHouse: houseLabel(region, single1) } : {}),
       confidence: ev.length ? derived(ev, "farm value formula") : single({ tier: "classic_baseline", note: "no prices" }),
-      sources: [everlootSrc()],
-      notes: unknown ? [`${unknown} item(s) had no price and were left out, so the real figure is higher.`] : undefined,
+      sources: [usedBlizzard.yes ? { ...sourceRef("blizzard"), credit: "Auction data from the Blizzard Battle.net API." } : everlootSrc()],
+      notes: [
+        ...(unknown ? [`${unknown} item(s) had no price and were left out, so the real figure is higher.`] : []),
+        ...(!single1 && faction && ah?.enabled ? ["Which auction house is this ruleset's isn't known yet: pass houseId (see auction_houses) for live prices."] : []),
+      ],
     });
   }));
 
@@ -976,6 +1058,33 @@ async function fetchItem(deps: Deps, itemId: number): Promise<Record<string, unk
     confidence: evidence.length ? agree(evidence) : { label: "low", score: 0, reasons: ["no source has this item"] },
     sources: srcs, notes,
   };
+}
+
+function houseLabel(region: string, h: HouseInfo) {
+  const ruleset = GROUP_RULESETS[region as keyof typeof GROUP_RULESETS]?.[h.group];
+  return { houseId: h.id, house: h.name, faction: h.faction ?? "unknown", group: h.group, ...(ruleset ? { ruleset } : {}) };
+}
+
+/** The houses to read: one by id, the faction's house for a known ruleset, or the faction's house in every group. */
+async function pickHouses(ah: AuctionPrices, region: "eu" | "us" | "kr" | "tw", faction?: Faction, ruleset?: string, houseId?: number): Promise<HouseInfo[]> {
+  const all = await ah.houses(region);
+  if (houseId) return all.filter((h) => h.id === houseId);
+  const mine = all.filter((h) => h.faction === faction);
+  const groups = GROUP_RULESETS[region];
+  if (groups && ruleset) {
+    const want = ruleset.toLowerCase().replace(/[^a-z]/g, "");
+    const hit = mine.filter((h) => groups[h.group]?.toLowerCase().replace(/[^a-z]/g, "") === want);
+    if (hit.length) return hit;
+  }
+  return mine;
+}
+
+async function blizzardPrice(ah: AuctionPrices, region: "eu" | "us" | "kr" | "tw", houseId: number, itemId: number) {
+  const snap = await ah.snapshot(region, houseId);
+  const row = snap.items[String(itemId)];
+  const ageDays = (Date.now() - Date.parse(snap.scannedAt)) / 86_400_000;
+  if (!row) return { itemId, market: "unknown", marketCopper: null as number | null, note: "none listed right now", evidence: undefined as Evidence | undefined };
+  return { itemId, market: formatCopper(row[1]), marketCopper: row[1] as number | null, note: undefined as string | undefined, evidence: { tier: "official", ageDays } as Evidence };
 }
 
 async function priceOf(deps: Deps, realm: string, itemId: number) {

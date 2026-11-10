@@ -12,6 +12,11 @@ browser = { binding = "BROWSER" }
 command = "node scripts/bundle-kb.mjs"
 watch_dir = "kb"
 
+# Keeps auction house prices fresh: every 15 minutes the four stalest houses are re-read from
+# Blizzard's API, so each of the ~15 Forever houses is refreshed about once an hour.
+[triggers]
+crons = ["*/15 * * * *"]
+
 [observability]
 enabled = true
 

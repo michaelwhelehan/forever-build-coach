@@ -5,7 +5,8 @@ import { ForeverDb } from "./sources/foreverdb.js";
 import { ForeverDbSite } from "./sources/foreverdb-site.js";
 import { ItemCatalog } from "./sources/foreverdb-data.js";
 import { Guides } from "./sources/guides.js";
-import { Blizzard } from "./sources/blizzard.js";
+import { Blizzard, type Region } from "./sources/blizzard.js";
+import { AuctionPrices } from "./sources/auctions.js";
 import type { KvLike } from "./cache.js";
 
 export interface Env {
@@ -24,6 +25,10 @@ export interface Env {
   BROWSER?: import("@cloudflare/puppeteer").BrowserWorker;
   /** Optional Workers KV namespace that shares cached answers between Worker instances. */
   CACHE?: KvLike;
+  /** Regions whose auction houses the cron keeps fresh, comma separated; default "eu". "off" stops it. */
+  AUCTION_REGIONS?: string;
+  /** Auction houses refreshed per cron run (each download is up to ~9 MB); default 4. */
+  AUCTION_HOUSES_PER_RUN?: string;
 }
 
 // Built once per Worker instance and reused across requests, so the in-memory cache survives between calls.
@@ -43,6 +48,7 @@ export function depsFor(env: Env): Deps {
         browser: env.BROWSER,
       },
     };
+    cached.deps.auctions = new AuctionPrices(cached.deps.blizzard, env.CACHE);
   }
   return cached.deps;
 }
@@ -59,6 +65,18 @@ const rpcError = (status: number, code: number, message: string, headers: Record
   Response.json({ jsonrpc: "2.0", error: { code, message }, id: null }, { status, headers });
 
 export default {
+  /** Cron (see wrangler.toml): keeps auction house prices about an hour fresh, a few houses per run. */
+  async scheduled(_event: unknown, env: Env, ctx: { waitUntil(p: Promise<unknown>): void }): Promise<void> {
+    const deps = depsFor(env);
+    if (!deps.auctions?.enabled || env.AUCTION_REGIONS === "off") return;
+    const regions = (env.AUCTION_REGIONS || "eu").split(",").map((r) => r.trim().toLowerCase()).filter((r): r is Region => ["us", "eu", "kr", "tw"].includes(r));
+    const perRun = Number(env.AUCTION_HOUSES_PER_RUN || 4);
+    ctx.waitUntil(Promise.all(regions.map(async (r) => {
+      const done = await deps.auctions!.refreshStalest(r, perRun).catch((e) => { console.error(`auction cron ${r}:`, e); return []; });
+      console.log(`auction cron ${r}: refreshed ${done.join(", ") || "nothing"}`);
+    })));
+  },
+
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const deps = depsFor(env);

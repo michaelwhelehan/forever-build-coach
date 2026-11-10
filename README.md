@@ -41,7 +41,8 @@ people "know" is really Classic 1.12 carried over.
 | `patch_changes` | Recent buffs, nerfs, hotfixes and blue posts | ForeverDB key for buffs/nerfs |
 | `xp_calculator` | XP to level, XP per kill, kills to level, rested pool, quest penalties | |
 | `levelling_plan` | Compare questing, grinding and dungeons by XP/hour and gold/hour | |
-| `market_price` | Auction prices on your ruleset, and what you'd net | |
+| `market_price` | Live auction prices (Blizzard API, read hourly) for your faction's house, and what you'd net | Battle.net key |
+| `auction_houses` | Every Forever auction house, its faction and group, and one item's price across all of them | Battle.net key |
 | `farm_value` | Gold per hour from a farm | |
 | `profession_cost` | Cheapest known path to level a profession, with total cost | |
 | `confidence_score` | Score a claim with the shared rules | |
