@@ -47,9 +47,20 @@ export function factionOf(name: string): Faction | undefined {
  */
 export const GROUP_RULESETS: Partial<Record<Region, Record<number, string>>> = {};
 
+/**
+ * Blizzard lists the houses by faction: 110-112 Alliance, 113-115 Horde, 116-118 Blackwater, then
+ * 119-121 and 123-125 as Alliance/Horde/Blackwater triples. A ruleset's houses are the nth house of
+ * each faction (e.g. 110, 113, 116), so the group is a house's position among its faction's houses.
+ */
 export function groupHouses(list: { id: number; name: string }[]): HouseInfo[] {
   const sorted = [...list].sort((a, b) => a.id - b.id);
-  return sorted.map((h, i) => ({ id: h.id, name: h.name, faction: factionOf(h.name), group: Math.floor(i / 3) + 1 }));
+  const seen: Record<string, number> = {};
+  return sorted.map((h) => {
+    const faction = factionOf(h.name);
+    const key = faction ?? "unknown";
+    seen[key] = (seen[key] ?? 0) + 1;
+    return { id: h.id, name: h.name, faction, group: seen[key] };
+  });
 }
 
 type RawAuction = { item?: { id?: number }; buyout?: number; unit_price?: number; quantity?: number };
@@ -100,7 +111,12 @@ export class AuctionPrices {
     if (hit && Date.now() - hit.at < 6 * 3600_000) return hit.houses;
     const kvKey = `ah:${region}:houses`;
     const shared = (await this.kv?.get(kvKey, "json").catch(() => null)) as { at: number; houses: HouseInfo[] } | null;
-    if (shared && Date.now() - shared.at < 6 * 3600_000) { this.houseList.set(region, shared); return shared.houses; }
+    if (shared && Date.now() - shared.at < 6 * 3600_000) {
+      // Groups are worked out again so a stored list from an older version still groups correctly.
+      const entry = { at: shared.at, houses: groupHouses(shared.houses) };
+      this.houseList.set(region, entry);
+      return entry.houses;
+    }
     const idx = await this.blizzard.raw(region, `/data/wow/ruleset/${LIST_RULESET}/auctions/`, "dynamic");
     const list = ((idx.auctions ?? []) as { id: number; name: string }[]).map((h) => ({ id: h.id, name: h.name }));
     const entry = { at: Date.now(), houses: groupHouses(list) };
