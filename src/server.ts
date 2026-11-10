@@ -786,7 +786,7 @@ export function createServer(deps: Deps): McpServer {
     return reply({
       region, houses: rows,
       sources: [{ ...sourceRef("blizzard"), credit: "Auction data from the Blizzard Battle.net API. World of Warcraft is a trademark of Blizzard Entertainment." }],
-      notes: ["A group is one ruleset's Alliance, Horde and Blackwater houses (the nth house of each faction). Group 3 (112, 115, 118) is empty. Groups 1 and 2 are Normal and PvP, which is which isn't in the API yet; groups 4 and 5 are thought to be the two Roleplay rulesets (Forever Mastery)."],
+      notes: ["A group is one ruleset's Alliance, Horde and Blackwater houses (the nth house of each faction). Group 3 (112, 115, 118) is empty. In the EU, group 1 is PvP and group 2 is Normal (matched against in-game prices); groups 4 and 5 are thought to be the two Roleplay rulesets (Forever Mastery)."],
     });
   }));
 

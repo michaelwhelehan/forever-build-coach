@@ -141,7 +141,7 @@ latest list. Without an Anthropic key you still get the maths-only list.
 
 1. `npx wrangler d1 create forever-build-coach`, then uncomment the `[[d1_databases]]` block in
    `wrangler.toml` and paste the id.
-2. In the Worker's settings, add the variable `GOLD_HOUSE_IDS` (your house id from `auction_houses`, e.g. `113`).
+2. In the Worker's settings, add the variable `GOLD_HOUSE_IDS` (your house id from `auction_houses`, e.g. `114` for EU Normal Horde).
 3. Optional: `npx wrangler secret put ANTHROPIC_API_KEY` for the AI review.
 
 Other settings: `GOLD_DAILY_BUDGET_USD` (default 0.20, the most the AI may spend per UTC day; spend is

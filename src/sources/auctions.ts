@@ -45,7 +45,11 @@ export function factionOf(name: string): Faction | undefined {
  * Which ruleset each group of houses serves isn't in the API. Fill this in once it's known
  * (group number, counted from 1 by house id). Until then tools show every group.
  */
-export const GROUP_RULESETS: Partial<Record<Region, Record<number, string>>> = {};
+export const GROUP_RULESETS: Partial<Record<Region, Record<number, string>>> = {
+  // EU group 2 confirmed Normal on 2026-11-10: a Normal Horde player's Deviate Fish price matched house 114,
+  // not 113. That leaves group 1 as PvP.
+  eu: { 1: "PvP", 2: "Normal" },
+};
 
 /**
  * Blizzard lists the houses by faction: 110-112 Alliance, 113-115 Horde, 116-118 Blackwater, then
