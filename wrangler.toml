@@ -17,6 +17,10 @@ watch_dir = "kb"
 [triggers]
 crons = ["*/15 * * * *"]
 
+# Plain settings. A deploy replaces variables set in the dashboard, so they live here instead.
+[vars]
+GOLD_HOUSE_IDS = "114"   # EU Normal Horde auction house, watched by the gold finder
+
 [observability]
 enabled = true
 
