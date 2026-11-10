@@ -28,8 +28,16 @@ enabled = true
 binding = "CACHE"
 id = "f3969c1915c0482482d36fe5a72e0762"
 
+# Optional: D1 database for the gold finder's price history (see README, "Gold finder").
+# Create it with  npx wrangler d1 create forever-build-coach  then uncomment and paste the id.
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "forever-build-coach"
+# database_id = "<paste id>"
+
 # Secrets (never put them in this file):
 #   npx wrangler secret put ACCESS_TOKEN
 #   npx wrangler secret put FOREVERDB_API_KEY        (optional)
 #   npx wrangler secret put BLIZZARD_CLIENT_ID       (optional)
 #   npx wrangler secret put BLIZZARD_CLIENT_SECRET   (optional)
+#   npx wrangler secret put ANTHROPIC_API_KEY        (optional, gold finder AI review)

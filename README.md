@@ -43,6 +43,7 @@ people "know" is really Classic 1.12 carried over.
 | `levelling_plan` | Compare questing, grinding and dungeons by XP/hour and gold/hour | |
 | `market_price` | Live auction prices (Blizzard API, read hourly) for your faction's house, and what you'd net | Battle.net key |
 | `auction_houses` | Every Forever auction house, its faction and group, and one item's price across all of them | Battle.net key |
+| `gold_opportunities` | Money makers found on your house a few times a day: dips under the 7-day average, price spikes, greens worth disenchanting, ranked by Claude Haiku under a daily spending cap | Battle.net key, D1, optional Anthropic key |
 | `farm_value` | Gold per hour from a farm | |
 | `profession_cost` | Cheapest known path to level a profession, with total cost | |
 | `confidence_score` | Score a claim with the shared rules | |
@@ -130,3 +131,20 @@ npm test          # unit tests + an end-to-end test of the Worker against fake E
 npm run dev       # local Worker on :8787 (copy .dev.vars.example to .dev.vars first)
 npm run check     # what CI runs: typecheck, tests, Wrangler dry-run build
 ```
+
+## Gold finder (optional)
+
+Every few hours the cron saves your auction house's prices to a D1 database, picks candidates with
+simple maths (items under 60% of their 7-day average, prices over 140% of it, greens worth more as
+enchanting materials) and asks Claude Haiku to rank the best ten. `gold_opportunities` returns the
+latest list. Without an Anthropic key you still get the maths-only list.
+
+1. `npx wrangler d1 create forever-build-coach`, then uncomment the `[[d1_databases]]` block in
+   `wrangler.toml` and paste the id.
+2. In the Worker's settings, add the variable `GOLD_HOUSE_IDS` (your house id from `auction_houses`, e.g. `113`).
+3. Optional: `npx wrangler secret put ANTHROPIC_API_KEY` for the AI review.
+
+Other settings: `GOLD_DAILY_BUDGET_USD` (default 0.20, the most the AI may spend per UTC day; spend is
+tracked from each answer's token usage), `GOLD_EVERY_HOURS` (default 4), `GOLD_PLAYER` (a line
+about your character for the AI), `GOLD_NOTEWORTHY_COPPER` (default 5000: profit a find needs before
+it's flagged noteworthy). One house stays well inside D1's free limits; two is the most allowed.

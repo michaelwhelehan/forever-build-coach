@@ -15,8 +15,9 @@ import { normaliseStats, scoreStats, weightsFor, specsFor, STAT_KEYS, type Stats
 import * as xp from "./formulas/xp.js";
 import { netAfterCut, formatCopper, AH_CUT } from "./formulas/gold.js";
 import { AuctionPrices, GROUP_RULESETS, type Faction, type HouseInfo } from "./sources/auctions.js";
+import type { GoldFinder } from "./sources/gold.js";
 
-export const VERSION = "0.5.0";
+export const VERSION = "0.6.0";
 
 const CLASSES = ["warrior", "paladin", "hunter", "rogue", "priest", "shaman", "mage", "warlock", "druid"] as const;
 const classEnum = z.enum(CLASSES);
@@ -33,7 +34,7 @@ Rules for every answer (full text: kb_guide topic "rules"):
 
 Good starting points: character_lookup (if the player gives name + surname), gear_upgrades (the in-game addon's FBC1 line, or character_lookup's gear), find_items, levelling_guide ("what next", "which talent"), profession_guide (what to craft next), gold_guide, talent_tree, levelling_plan, profession_cost. Use the optimize_build prompt for a full review.`;
 
-export interface Deps { everloot: Everloot; foreverdb: ForeverDb; foreverdbSite?: ForeverDbSite; catalog?: ItemCatalog; guides?: Guides; blizzard: Blizzard; browser?: BrowserWorker; auctions?: AuctionPrices }
+export interface Deps { everloot: Everloot; foreverdb: ForeverDb; foreverdbSite?: ForeverDbSite; catalog?: ItemCatalog; guides?: Guides; blizzard: Blizzard; browser?: BrowserWorker; auctions?: AuctionPrices; gold?: GoldFinder }
 
 type Src = { id: string; name: string; url: string; credit?: string };
 
@@ -786,6 +787,40 @@ export function createServer(deps: Deps): McpServer {
       region, houses: rows,
       sources: [{ ...sourceRef("blizzard"), credit: "Auction data from the Blizzard Battle.net API. World of Warcraft is a trademark of Blizzard Entertainment." }],
       notes: ["A group is one ruleset's Alliance, Horde and Blackwater houses (the nth house of each faction). Group 3 (112, 115, 118) is empty. Groups 1 and 2 are Normal and PvP, which is which isn't in the API yet; groups 4 and 5 are thought to be the two Roleplay rulesets (Forever Mastery)."],
+    });
+  }));
+
+  server.registerTool("gold_opportunities", {
+    title: "Gold opportunities on the auction house",
+    description: "The latest auction house money makers the server found for its watched house: items listed well under their 7-day average (buy and relist), prices spiking (sell now), and cheap greens worth more disenchanted. A few times a day the server saves prices to its database, picks candidates with simple maths and has Claude Haiku rank them, within a daily spending cap. Give sinceIso to get only the finds flagged noteworthy after that time.",
+    inputSchema: {
+      houseId: z.number().int().positive().optional().describe("Defaults to the first watched house."),
+      sinceIso: z.string().optional().describe("ISO time: return only noteworthy finds saved after it."),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, safe(async ({ houseId, sinceIso }) => {
+    const gold = deps.gold;
+    if (!gold) return reply({ error: "The gold finder isn't switched on here. It needs a D1 database bound as DB and GOLD_HOUSE_IDS set (ANTHROPIC_API_KEY adds the AI review)." });
+    const id = houseId ?? gold.houseIds[0];
+    const spend = await gold.spentToday();
+    const credit = [{ ...sourceRef("blizzard"), credit: "Auction data from the Blizzard Battle.net API. World of Warcraft is a trademark of Blizzard Entertainment." }];
+    const budget = { spentTodayUsd: Math.round(spend.usd * 1e4) / 1e4, reviewsToday: spend.calls, dailyCapUsd: gold.settingsView.dailyBudgetUsd };
+    const link = <T extends { itemId: number }>(o: T) => ({ ...o, url: `https://foreverdb.net/item/${o.itemId}` });
+    if (sinceIso) {
+      const since = Date.parse(sinceIso);
+      if (!Number.isFinite(since)) return fail("sinceIso isn't a valid time.");
+      const finds = await gold.noteworthySince(id, since);
+      return reply({ houseId: id, since: sinceIso, noteworthy: finds.map((o) => ({ ...link(o), buyAtMost: formatCopper(o.buyAtMostCopper), sellAt: formatCopper(o.sellAtCopper), expectedProfit: formatCopper(o.expectedProfitCopper) })), budget, sources: credit });
+    }
+    const a = await gold.latest(id);
+    if (!a) return reply({ houseId: id, note: "No list yet. The first one appears within a few hours of the database being set up.", settings: gold.settingsView, budget });
+    return reply({
+      houseId: id, foundAt: a.at, reviewedBy: a.model, ...(a.skipped ? { aiSkipped: a.skipped } : {}), summary: a.summary, candidatesChecked: a.candidates,
+      opportunities: a.opportunities.map((o) => ({ ...link(o), buyAtMost: formatCopper(o.buyAtMostCopper), sellAt: formatCopper(o.sellAtCopper), expectedProfit: formatCopper(o.expectedProfitCopper) })),
+      budget,
+      confidence: single({ tier: "official", ageDays: (Date.now() - Date.parse(a.at)) / 86_400_000, note: "listing prices from Blizzard; disenchant values use the Classic 1.12 table" }),
+      sources: credit,
+      notes: ["Asking prices, not sale prices: check the listing in game before you buy.", "Disenchant odds are the Classic 1.12 baseline; Forever may differ.", "Profits are after the 5% auction house cut."],
     });
   }));
 
