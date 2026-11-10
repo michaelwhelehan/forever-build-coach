@@ -9,7 +9,9 @@ class MemoryKv implements KvLike {
   async put(key: string, value: string) { this.data.set(key, value); }
 }
 
-const INDEX = { auctions: [110, 111, 112, 113, 114, 115].map((id) => ({ id, name: ["Alliance Auction House", "Horde Auction House", "Blackwater Auction House"][(id - 110) % 3], key: {} })) };
+// As Blizzard lists them: a block per faction first, then Alliance/Horde/Blackwater triples.
+const NAMES: Record<number, string> = { 110: "Alliance", 111: "Alliance", 113: "Horde", 114: "Horde", 119: "Alliance", 120: "Horde", 121: "Blackwater" };
+const INDEX = { auctions: [110, 111, 113, 114, 119, 120].map((id) => ({ id, name: `${NAMES[id]} Auction House`, key: {} })) };
 
 function fakeBlizzard(calls: string[]): Blizzard {
   return {
@@ -38,10 +40,11 @@ describe("auction summaries", () => {
     expect(items["2"]).toEqual([999999, 999999, 1, 1]);
   });
 
-  it("groups houses in threes by id and reads the faction from the name", () => {
-    const g = groupHouses(INDEX.auctions);
-    expect(g.map((h) => h.group)).toEqual([1, 1, 1, 2, 2, 2]);
-    expect(g[1]).toMatchObject({ id: 111, faction: "horde" });
+  it("groups the nth house of each faction together and reads the faction from the name", () => {
+    const g = groupHouses([110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121].map((id) => ({ id, name: `${id < 113 || id === 119 ? "Alliance" : id < 116 || id === 120 ? "Horde" : "Blackwater"} Auction House` })));
+    expect(g.filter((h) => h.group === 1).map((h) => h.id)).toEqual([110, 113, 116]);
+    expect(g.filter((h) => h.group === 4).map((h) => h.id)).toEqual([119, 120, 121]);
+    expect(g[3]).toMatchObject({ id: 113, faction: "horde" });
     expect(factionOf("Blackwater Auction House")).toBe("neutral");
   });
 });
@@ -65,8 +68,8 @@ describe("AuctionPrices", () => {
   it("cron refreshes only the stalest houses, a few per run", async () => {
     const calls: string[] = [];
     const ah = new AuctionPrices(fakeBlizzard(calls), new MemoryKv());
-    expect(await ah.refreshStalest("eu", 4)).toEqual([110, 111, 112, 113]);
-    expect(await ah.refreshStalest("eu", 4)).toEqual([114, 115]);
+    expect(await ah.refreshStalest("eu", 4)).toEqual([110, 111, 113, 114]);
+    expect(await ah.refreshStalest("eu", 4)).toEqual([119, 120]);
     expect(await ah.refreshStalest("eu", 4)).toEqual([]);
   });
 });
