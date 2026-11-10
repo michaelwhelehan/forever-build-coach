@@ -7,6 +7,8 @@ import { ItemCatalog } from "./sources/foreverdb-data.js";
 import { Guides } from "./sources/guides.js";
 import { Blizzard, type Region } from "./sources/blizzard.js";
 import { AuctionPrices } from "./sources/auctions.js";
+import { GoldFinder, goldSettingsFrom, type D1Like } from "./sources/gold.js";
+import Anthropic from "@anthropic-ai/sdk";
 import type { KvLike } from "./cache.js";
 
 export interface Env {
@@ -29,12 +31,27 @@ export interface Env {
   AUCTION_REGIONS?: string;
   /** Auction houses refreshed per cron run (each download is up to ~9 MB); default 4. */
   AUCTION_HOUSES_PER_RUN?: string;
+  /** Optional D1 database for price history and the gold finder. */
+  DB?: D1Like;
+  /** Optional: lets Claude Haiku review the gold finder's picks. Without it the list is maths only. */
+  ANTHROPIC_API_KEY?: string;
+  /** Auction house ids the gold finder watches, comma separated (at most 2), e.g. "113". Unset = off. */
+  GOLD_HOUSE_IDS?: string;
+  GOLD_REGION?: string;
+  /** Most the AI review may spend per UTC day, US dollars; default 0.20. */
+  GOLD_DAILY_BUDGET_USD?: string;
+  /** Hours between history saves and reviews; default 4. */
+  GOLD_EVERY_HOURS?: string;
+  /** One line about the player, given to the AI. */
+  GOLD_PLAYER?: string;
+  /** Profit (copper) an opportunity needs before it's flagged noteworthy; default 5000 (50 silver). */
+  GOLD_NOTEWORTHY_COPPER?: string;
 }
 
 // Built once per Worker instance and reused across requests, so the in-memory cache survives between calls.
 let cached: { key: string; deps: Deps } | undefined;
 export function depsFor(env: Env): Deps {
-  const key = [env.EVERLOOT_URL, env.FOREVERDB_API_KEY, env.FOREVERDB_BASE, env.FOREVERDB_SITE, env.FOREVERDB_ITEMS_URL, env.BLIZZARD_CLIENT_ID, env.EVERLOOT_HOURLY_BUDGET, Boolean(env.CACHE), Boolean(env.BROWSER)].join("|");
+  const key = [env.EVERLOOT_URL, env.FOREVERDB_API_KEY, env.FOREVERDB_BASE, env.FOREVERDB_SITE, env.FOREVERDB_ITEMS_URL, env.BLIZZARD_CLIENT_ID, env.EVERLOOT_HOURLY_BUDGET, Boolean(env.CACHE), Boolean(env.BROWSER), Boolean(env.DB), Boolean(env.ANTHROPIC_API_KEY), env.GOLD_HOUSE_IDS, env.GOLD_REGION, env.GOLD_DAILY_BUDGET_USD, env.GOLD_EVERY_HOURS, env.GOLD_PLAYER, env.GOLD_NOTEWORTHY_COPPER].join("|");
   if (cached?.key !== key) {
     cached = {
       key,
@@ -49,6 +66,15 @@ export function depsFor(env: Env): Deps {
       },
     };
     cached.deps.auctions = new AuctionPrices(cached.deps.blizzard, env.CACHE);
+    const gold = goldSettingsFrom(env);
+    if (env.DB && gold) {
+      const catalog = cached.deps.catalog;
+      cached.deps.gold = new GoldFinder(
+        env.DB, gold,
+        env.ANTHROPIC_API_KEY ? new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, maxRetries: 1 }) : undefined,
+        catalog ? (id) => catalog.get(id) : undefined,
+      );
+    }
   }
   return cached.deps;
 }
@@ -74,7 +100,11 @@ export default {
     ctx.waitUntil(Promise.all(regions.map(async (r) => {
       const done = await deps.auctions!.refreshStalest(r, perRun).catch((e) => { console.error(`auction cron ${r}:`, e); return []; });
       console.log(`auction cron ${r}: refreshed ${done.join(", ") || "nothing"}`);
-    })));
+    })).then(async () => {
+      if (!deps.gold) return;
+      const runs = await deps.gold.maybeRun(deps.auctions!).catch((e) => { console.error("gold finder:", e); return []; });
+      for (const a of runs) console.log(`gold finder ${a.houseId}: ${a.opportunities.length} picks, $${a.costUsd}${a.skipped ? ` (${a.skipped})` : ""}`);
+    }));
   },
 
   async fetch(request: Request, env: Env): Promise<Response> {
