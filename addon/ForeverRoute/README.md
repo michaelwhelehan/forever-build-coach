@@ -14,7 +14,13 @@ unlock, and quests already in your log that aren't worth it any more show up as 
 3. Restart the game or `/reload`.
 
 ## Use
-- `/fr` shows or hides the window and the arrow. Drag either to move it.
+- `/fr` or the map button by the minimap shows or hides the window and the arrow. Drag either to move it.
+- The window has a card for the step you're on (with its objectives and progress from your quest log), your XP bar
+  with how far the route takes you, and the next steps grouped by zone. The minus button shrinks it to the card.
+- The arrow turns green when you're heading straight for the step, shows the distance and time to get there,
+  and a tick when you've arrived.
+- The cog, a right-click on the minimap button or `/fr options` opens the settings: XP threshold, levels above you,
+  dungeon and group quests, steps shown, scale, opacity, lock, arrow, map pin, minimap button.
 - Hover a step for details (quest level, XP, objectives from your log). Right-click a step, or press **Skip**,
   to leave a quest out (`/fr unskip` brings them all back).
 - `/fr minxp 60`: leave out quests worth less than this % of their XP. ForeverDB's rule: 100% up to 5 levels

@@ -5,7 +5,10 @@
 local ADDON, ns = ...
 _G.ForeverRoute = ns
 
-local DEFAULT_OPTS = { minXpPct = 60, maxAbove = 3, steps = 40, dungeonQuests = false, groupQuests = false, arrow = true, mapPin = true }
+local DEFAULT_OPTS = {
+  minXpPct = 60, maxAbove = 3, steps = 40, dungeonQuests = false, groupQuests = false, arrow = true, mapPin = true,
+  rows = 6, scale = 1, alpha = 0.92, locked = false, minimap = true, minimapAngle = 215, collapsed = false,
+}
 
 ns.steps, ns.summary = {}, nil
 local completed = {}
@@ -74,12 +77,18 @@ local function position()
 end
 ns.position = position
 
--- The game's objective lines for a quest in your log.
+-- The game's objective lines for a quest in your log: { { text, finished }, ... }
 function ns.objectives(questID)
   local out = {}
   if C_QuestLog and C_QuestLog.GetQuestObjectives then
     for _, o in ipairs(C_QuestLog.GetQuestObjectives(questID) or {}) do
-      if o.text and o.text ~= "" then out[#out + 1] = (o.finished and "|cff808080" or "|cffffffff") .. o.text .. "|r" end
+      if o.text and o.text ~= "" then out[#out + 1] = { text = o.text, finished = o.finished } end
+    end
+  elseif GetNumQuestLeaderBoards and ns.log and ns.log[questID] then
+    local idx = ns.log[questID].index
+    for j = 1, GetNumQuestLeaderBoards(idx) or 0 do
+      local text, _, finished = GetQuestLogLeaderBoard(j, idx)
+      if text and text ~= "" then out[#out + 1] = { text = text, finished = finished } end
     end
   end
   return out
@@ -133,6 +142,7 @@ function ns.Replan(reason)
       table.sort(dropped)
       msg(string.format("level %d: dropped %d quest%s that are too low now: %s", level, #dropped, #dropped == 1 and "" or "s",
         table.concat(dropped, ", ", 1, math.min(#dropped, 6)) .. (#dropped > 6 and ", ..." or "")))
+      if ns.Toast then ns.Toast(string.format("Level %d: %d quest%s too low now, dropped from the route", level, #dropped, #dropped == 1 and "" or "s")) end
     end
   end
   lastPlanIds, lastLevel = ids, level
@@ -211,6 +221,8 @@ SlashCmdList.FOREVERROUTE = function(input)
     o[key] = not o[key]
     msg(cmd .. " " .. (o[key] and "on" or "off"))
     ns.Replan("opts")
+  elseif cmd == "options" or cmd == "settings" or cmd == "config" then
+    if ns.ToggleSettings then ns.ToggleSettings() end
   elseif cmd == "refresh" then
     loadCompleted(); ns.Replan("refresh")
   elseif cmd == "reset" then
@@ -219,7 +231,7 @@ SlashCmdList.FOREVERROUTE = function(input)
     if ns.ResetUI then ns.ResetUI() end
     msg("settings reset.")
   else
-    msg("/fr  show or hide | /fr skip  skip the current quest | /fr unskip | /fr minxp 60  lowest XP % worth doing |"
+    msg("/fr  show or hide | /fr options  settings window | /fr skip  skip the current quest | /fr unskip | /fr minxp 60  lowest XP % worth doing |"
       .. " /fr above 3  levels above you | /fr dungeons | /fr group | /fr arrow | /fr pin | /fr refresh | /fr reset")
   end
 end

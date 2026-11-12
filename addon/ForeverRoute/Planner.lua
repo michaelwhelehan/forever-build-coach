@@ -193,6 +193,8 @@ function ns.Plan(state)
   end
   local function add(step)
     step.level = sim.level
+    step.time = sim.time
+    step.levelPct = floor(sim.xp / math.max(1, xpToLevel(sim)) * 100)
     steps[#steps + 1] = step
   end
   local function go(m, x, y)
@@ -318,8 +320,9 @@ function ns.Plan(state)
       local m, x, y, n = bestZone()
       if m and travels < 6 then
         travels = travels + 1
-        add({ kind = "travel", map = m, x = x, y = y, count = n, fromMap = sim.map })
+        local fromMap = sim.map
         go(m, x, y)
+        add({ kind = "travel", map = m, x = x, y = y, count = n, fromMap = fromMap })
       elseif grinds < 1 and sim.level < MAX_LEVEL then
         grinds = grinds + 1
         add({ kind = "grind", toLevel = sim.level + 1 })

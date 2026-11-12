@@ -12,3 +12,4 @@ Data.lua
 Planner.lua
 Core.lua
 UI.lua
+Settings.lua

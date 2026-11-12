@@ -15,11 +15,20 @@ local function mock(name)
     if k == "Show" then return function(self) self._shown = true end end
     if k == "Hide" then return function(self) self._shown = false end end
     if k == "SetText" then return function(self, v) self._text = v end end
+    if k == "SetHeight" then return function(self, v) rawset(self, "_h", v) end end
+    if k == "GetHeight" then return function(self) return rawget(self, "_h") or 20 end end
+    if k == "SetSize" then return function(self, w, h) rawset(self, "_w", w); rawset(self, "_h", h) end end
+    if k == "GetWidth" then return function(self) return rawget(self, "_w") or 140 end end
+    if k == "GetCenter" then return function() return 500, 500 end end
+    if k == "GetEffectiveScale" then return function() return 1 end end
+    if k == "GetChecked" then return function() return true end end
     return function() end
   end })
 end
 CreateFrame = function(_, name) local f = mock(name); if name then _G[name] = f end; return f end
-UIParent = mock("UIParent"); GameTooltip = mock("GameTooltip")
+UIParent = mock("UIParent"); GameTooltip = mock("GameTooltip"); Minimap = mock("Minimap")
+UISpecialFrames = {}; tinsert = table.insert; GetXPExhaustion = function() return 3000 end
+GetCursorPosition = function() return 600, 400 end; GetUnitSpeed = function() return 7 end
 DEFAULT_CHAT_FRAME = { AddMessage = function(_, m) print("CHAT", (m:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""))) end }
 C_Timer = { After = function(_, fn) timers[#timers + 1] = fn end }
 local level, xp = 20, 1000
@@ -51,7 +60,7 @@ GetTime = function() return os.clock() * 1000 end
 SlashCmdList = {}
 
 local ns = {}
-for _, f in ipairs({ dataFile, "addon/ForeverRoute/Planner.lua", "addon/ForeverRoute/Core.lua", "addon/ForeverRoute/UI.lua" }) do
+for _, f in ipairs({ dataFile, "addon/ForeverRoute/Planner.lua", "addon/ForeverRoute/Core.lua", "addon/ForeverRoute/UI.lua", "addon/ForeverRoute/Settings.lua" }) do
   assert(loadfile(f))("ForeverRoute", ns)
 end
 local function fire(ev, ...) for _, fr in ipairs(frames) do local fn = fr._scripts.OnEvent if fn then fn(fr, ev, ...) end end end
@@ -78,4 +87,28 @@ SlashCmdList.FOREVERROUTE("minxp 80"); SlashCmdList.FOREVERROUTE("dungeons"); Sl
 SlashCmdList.FOREVERROUTE(""); SlashCmdList.FOREVERROUTE("show")
 fire("QUEST_TURNED_IN", 869, 500, 0); fire("QUEST_LOG_UPDATE"); fire("ZONE_CHANGED_NEW_AREA"); flush()
 SlashCmdList.FOREVERROUTE("reset"); flush()
+-- The window, settings and minimap button.
+local function texts(f, out)
+  out = out or {}
+  for k, v in pairs(f) do if type(v) == "table" and rawget(v, "_text") then out[#out + 1] = plain(v._text) end end
+  return out
+end
+function plain(s) return (s or ""):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "") end
+ns.UpdateUI()
+local card = ForeverRouteFrame.card
+print("card:", plain(card.kind._text), "|", plain(card.title._text), "|", plain(card.detail._text))
+print("bar:", plain(ForeverRouteFrame.bar.text._text)); print("plan:", plain(ForeverRouteFrame.plan._text))
+for i, r in ipairs(ForeverRouteFrame.rows) do if r._shown and (rawget(r.text, "_text") or rawget(r.sep, "_text")) then
+  print("row", i, r.step and plain(r.text._text) or ("-- " .. plain(r.sep._text)), r.step and plain(r.right._text or "") or "") end end
+print("height", ForeverRouteFrame:GetHeight())
+ns.opts().collapsed = true; ns.UpdateUI(); print("collapsed height", ForeverRouteFrame:GetHeight()); ns.opts().collapsed = false
+ns.Toast("Level 24: test"); flush()
+SlashCmdList.FOREVERROUTE("options"); assert(ForeverRouteSettings, "settings window")
+for _, child in pairs(ForeverRouteSettings) do end
+ForeverRouteMinimapButton._scripts.OnEnter(ForeverRouteMinimapButton)
+ForeverRouteMinimapButton._scripts.OnClick(ForeverRouteMinimapButton, "LeftButton")
+ForeverRouteMinimapButton._scripts.OnDragStart(ForeverRouteMinimapButton); ForeverRouteMinimapButton._scripts.OnUpdate()
+print("minimap angle", math.floor(ns.opts().minimapAngle))
+px, py = 0.5185, 0.304 -- stand on the step
+ForeverRouteArrow._scripts.OnUpdate(ForeverRouteArrow, 1); print("arrow near:", plain(ForeverRouteArrow.dist._text))
 print("ok")
