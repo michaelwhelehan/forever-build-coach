@@ -8,21 +8,28 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: |
-          set -x
           mkdir d && cd d
-          curl -sS -A "forever-route-builder" https://foreverdb.net/downloads/addon-manifest.json -o manifest.json
-          head -c 600 manifest.json; echo
-          for f in QuestClassic QuestForever QuestXP Quests Starts NPCs Zones LevelRoutes SpecialQuests Routes_1 Coach Travel QuestGuide Dungeons; do
-            url=$(python3 -c "import json,sys;m=json.load(open('manifest.json'));print([x['url'] for x in m['data']['files'] if x['path'].endswith('/$f.lua')][0])" 2>/dev/null || python3 -c "import json;m=json.load(open('manifest.json'));print(json.dumps(m['data'])[:800])")
-            echo "=== $f $url"
-            curl -sS -A "forever-route-builder" "https://foreverdb.net/$url" -o $f.lua || true
-            wc -c $f.lua; wc -l $f.lua
-            head -c 2500 $f.lua | cut -c1-400; echo
-            echo "--- grep 4641/790/840"
-            grep -o -E '.{0,120}\[(4641|790|840)\].{0,250}' $f.lua | head -4
-          done
-          echo "=== Starts structure sample mid"
-          sed -n '50,60p' Starts.lua | cut -c1-500
-          echo "=== QuestClassic counts"
-          grep -c '^\s*\[' QuestClassic.lua; grep -c '^\s*\[' QuestForever.lua
-          grep -o -E '\[[0-9]+\]="[^"]*\|h\|' QuestClassic.lua | wc -l
+          curl -sS https://foreverdb.net/downloads/addon-manifest.json -o manifest.json
+          python3 - <<'PY'
+          import json,urllib.request,re
+          m=json.load(open('manifest.json'))
+          for f in m['data']['files']:
+              name=f['path'].split('/')[-1]
+              if name.startswith('L10n') or name.startswith('Routes_') or name in ('SearchNames.lua',): continue
+              s=urllib.request.urlopen(urllib.request.Request('https://foreverdb.net/'+f['url'],headers={'User-Agent':'forever-route-builder'})).read().decode('utf-8','replace')
+              open(name,'w').write(s)
+              print('=====',name,len(s))
+              # comment lines (format docs) and ns.* assignments
+              for line in s.split('\n'):
+                  if line.startswith('--') and not line.startswith('-- Data: ForeverDB'): print('  C',line[:300])
+                  elif re.match(r'\s*ns\.[A-Za-z_.\[\]"0-9]+\s*=',line): print('  A',line[:200])
+              for mm in list(re.finditer(r'.{0,80}\b3287\b.{0,160}',s))[:3]: print('  3287>',mm.group(0)[:260])
+          PY
+          python3 - <<'PY'
+          import re
+          s=open('QuestGuide.lua').read()
+          S=re.search(r'ns\.qgS = \{\n(.*?)\n\}',s,re.S).group(1)
+          strs=re.findall(r'^"((?:[^"\\]|\\.)*)",?$',S,re.M)
+          print('nstrings',len(strs))
+          for i in (805,815,816,2100,2101,867,46,38): print(i, strs[i-1][:200] if i-1<len(strs) else None)
+          PY
