@@ -7,3 +7,4 @@ src/kb-bundle.ts
 addon/ForeverRoute/Data.lua
 .foreverdb-data
 addon/ForeverRoute/COPYING.txt
+.questiedb

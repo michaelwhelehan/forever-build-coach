@@ -348,7 +348,7 @@ local function createWindow()
   frame.footer = { skip, refresh }
   frame.credit = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
   frame.credit:SetPoint("BOTTOMRIGHT", -8, 11)
-  frame.credit:SetText("Data from ForeverDB.net")
+  frame.credit:SetText("Data from ForeverDB.net and QuestieDB")
 
   local p = ForeverRouteDB.pos
   if p then frame:ClearAllPoints(); frame:SetPoint(p[1], UIParent, p[2], p[3], p[4]) end

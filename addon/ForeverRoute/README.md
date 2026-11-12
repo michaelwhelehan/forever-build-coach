@@ -37,8 +37,10 @@ count as one), simulates the XP, and repeats for 40 steps. When nothing worthwhi
 with the most quest XP for your level, less the travel to get there. With no quests left for your level it says to
 grind or run a dungeon.
 
-Limits: objective spots come from Classic spawn data where Forever's own aren't known yet (those steps say "spot
-unknown" and point at the quest's ender); XP to level after your current one is Classic's table; travel between
+Where ForeverDB has no objective spot, giver or faction for a quest, the build fills it from QuestieDB's Forever data
+(Questie's database, with spawns converted to Forever's maps and what Questie players recorded). Quests whose objectives
+are all inside an instance count as dungeon quests. Limits: about 370 quests still have no objective spot, mostly level
+51-60 crafted or raid items (those steps say "spot unknown" and point at the quest's ender); XP to level after your current one is Classic's table; travel between
 zones is a straight-line estimate. Quests that start from an item you loot aren't planned, but are followed once
 they're in your log.
 
@@ -46,13 +48,16 @@ they're in your log.
 Needs Lua 5.1 and curl:
 
     scripts/fetch-foreverdb-data.sh .foreverdb-data
-    lua5.1 scripts/build-forever-route.lua .foreverdb-data addon/ForeverRoute/Data.lua
+    git clone --depth 1 --filter=blob:none --sparse https://github.com/Questie/QuestieDB.git .questiedb
+    git -C .questiedb sparse-checkout set data/Forever src/corrections/Forever src/corrections/enum
+    lua5.1 scripts/build-forever-route.lua .foreverdb-data addon/ForeverRoute/Data.lua .questiedb
     lua5.1 test/forever-route/ingame.lua addon/ForeverRoute/Data.lua
     lua5.1 test/forever-route/simulate.lua addon/ForeverRoute/Data.lua 1 200
 
 `Data.lua` isn't committed: it's generated from ForeverDB's files.
 
 ## Licence and credit
-Data from [ForeverDB.net](https://foreverdb.net), including Classic data from CMaNGOS classic-db. That data is GPL-3.0
+Data from [ForeverDB.net](https://foreverdb.net), including Classic data from CMaNGOS classic-db, and from
+[QuestieDB](https://github.com/Questie/QuestieDB). That data is GPL-3.0
 with a credit term, so this addon is GPL-3.0 too (the release zip has the licence text), and the window shows
 "Data from ForeverDB.net". The rest of this repository stays MIT.

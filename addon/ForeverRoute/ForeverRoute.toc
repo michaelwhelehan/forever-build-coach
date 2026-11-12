@@ -4,7 +4,7 @@
 ## Author: Forever Build Coach
 ## Version: 0.1.0
 ## X-License: GPL-3.0
-## X-Credits: Data from ForeverDB.net (https://foreverdb.net), including Classic data from CMaNGOS classic-db (GPL-3.0).
+## X-Credits: Data from ForeverDB.net (https://foreverdb.net), including Classic data from CMaNGOS classic-db, and from QuestieDB (https://github.com/Questie/QuestieDB). All GPL-3.0.
 ## SavedVariables: ForeverRouteDB
 ## SavedVariablesPerCharacter: ForeverRouteCharDB
 

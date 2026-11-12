@@ -54,7 +54,7 @@ function ns.LoadQuests()
       em = tonumber(f[12]), ex = tonumber(f[13]), ey = tonumber(f[14]),
       om = tonumber(f[15]), ox = tonumber(f[16]), oy = tonumber(f[17]),
       xp = tonumber(f[18]) or 0, effort = tonumber(f[19]) or 0, flags = f[20] or "", kind = f[21] or "",
-      giver = f[22] or "", ender = f[23] or "",
+      giver = f[22] or "", ender = f[23] or "", exclTo = words(f[24]),
     }
     Q[id] = q
     if q.excl and q.excl > 0 then
@@ -131,6 +131,7 @@ local function available(q, sim, opts)
     for _, p in ipairs(q.any) do if sim.done[p] then ok = true break end end
     if not ok then return false end
   end
+  for _, o in ipairs(q.exclTo) do if sim.done[o] or sim.log[o] then return false end end
   if q.excl and q.excl > 0 then
     for _, o in ipairs(ns.exclGroups[q.excl] or {}) do
       if o ~= q.id and (sim.done[o] or sim.log[o]) then return false end

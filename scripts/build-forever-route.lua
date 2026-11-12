@@ -1,11 +1,15 @@
 -- Builds addon/ForeverRoute/Data.lua from ForeverDB.net's published addon data files.
--- Usage: lua5.1 scripts/build-forever-route.lua <folder with ForeverDB's Data/*.lua> <output Data.lua>
+-- Usage: lua5.1 scripts/build-forever-route.lua <folder with ForeverDB's Data/*.lua> <output Data.lua> [QuestieDB checkout]
 -- The folder needs QuestClassic, QuestForever, QuestXP, Zones and RouteMaps (scripts/fetch-foreverdb-data.sh gets them).
 -- ForeverDB's data is GPL-3.0 with a credit term (section 7(b)): "Data from ForeverDB.net". Data.lua carries it, and
 -- is not committed: the Forever Route workflow builds it into the release zip.
 
-local src, out = arg[1], arg[2]
-assert(src and out, "usage: lua5.1 build-forever-route.lua <data folder> <out file>")
+local src, out, questieRoot = arg[1], arg[2], arg[3]
+assert(src and out, "usage: lua5.1 build-forever-route.lua <data folder> <out file> [QuestieDB checkout]")
+local here = (arg[0]:match("^(.*)[/\\]") or ".")
+-- QuestieDB (GPL-3.0) fills what ForeverDB lacks: objective spots, givers, faction, Forever quests' objectives.
+local qdb = questieRoot and dofile(here .. "/questiedb-read.lua")(questieRoot)
+if qdb then for _, r in ipairs(qdb.report) do io.stderr:write("QuestieDB ", r, "\n") end end
 
 local ns = {}
 local function load(name)
@@ -167,11 +171,81 @@ local function hordeRaces(mask) -- Orc 2, Undead 16, Tauren 32, Troll 128
   return false
 end
 local qc, qf = ns.qcQuests or {}, ns.qfQuests or {}
+local Qq = qdb and qdb.quests or {}
 local ids = {}
 for id in pairs(qc) do ids[id] = true end
 for id in pairs(qf) do ids[id] = true end
+for id in pairs(Qq) do ids[id] = true end
 
-local rows, kept, skipped = {}, 0, {}
+-- QuestieDB helpers: spawns as {uiMap, x, y}.
+local unmapped = false -- set when a spawn is only inside an instance or another map we can't place
+local function qSpawns(kind, id)
+  local t = {}
+  if not qdb or not id then return t end
+  local row = kind == "npc" and qdb.npcs[id] or kind == "object" and qdb.objects[id]
+  local sp = row and row[kind == "npc" and 7 or 4]
+  for zone, list in pairs(sp or {}) do
+    local map = qdb.areaToMap[zone]
+    if map then for _, p in ipairs(list) do if p[1] and p[1] >= 0 then t[#t + 1] = { map, p[1], p[2] } end end
+    elseif #list > 0 then unmapped = true end
+  end
+  return t
+end
+local function addAll(t, list) for _, p in ipairs(list) do t[#t + 1] = p end return t end
+local function qWho(field) -- startedBy / finishedBy: { {npcs}, {objects}, {items} }
+  local t = {}
+  for _, id in ipairs(field and field[1] or {}) do addAll(t, qSpawns("npc", id)) end
+  for _, id in ipairs(field and field[2] or {}) do addAll(t, qSpawns("object", id)) end
+  return t
+end
+local function qWhoName(field)
+  local n = field and field[1] and field[1][1]
+  if n and qdb.npcs[n] then return qdb.npcs[n][1] or "" end
+  local o = field and field[2] and field[2][1]
+  if o and qdb.objects[o] then return qdb.objects[o][1] or "" end
+  return ""
+end
+-- Objective spots and a rough effort (seconds) from QuestieDB's objectives.
+local function qObjectives(row, level)
+  local t, effort = {}, 0
+  local o = row and row[10]
+  if o then
+    for _, c in ipairs(o[1] or {}) do addAll(t, qSpawns("npc", c[1])); effort = effort + 8 * pace(level, "c") end
+    for _, c in ipairs(o[2] or {}) do addAll(t, qSpawns("object", c[1])); effort = effort + 5 * pace(level, "o") end
+    for _, c in ipairs(o[3] or {}) do
+      local item = qdb.items[c[1]]
+      if item then
+        for _, n in ipairs(item[2] or {}) do addAll(t, qSpawns("npc", n)) end
+        for _, n in ipairs(item[3] or {}) do addAll(t, qSpawns("object", n)) end
+      end
+      effort = effort + 8 * pace(level, "c")
+    end
+    for _, k in ipairs(o[5] or {}) do
+      for _, n in ipairs(k[1] or {}) do addAll(t, qSpawns("npc", n)) end
+      effort = effort + 8 * pace(level, "c")
+    end
+  end
+  local trig = row and row[9]
+  if trig and type(trig[2]) == "table" then
+    for zone, list in pairs(trig[2]) do
+      local map = qdb.areaToMap[zone]
+      if map then for _, p in ipairs(list) do t[#t + 1] = { map, p[1], p[2] } end end
+    end
+    effort = effort + 20
+  end
+  return t, effort
+end
+local ALLIANCE_RACES = { 1, 4, 8, 64 }
+local function questieSide(mask)
+  if not mask or mask == 0 then return "" end
+  local h, a = hordeRaces(mask), false
+  for _, b in ipairs(ALLIANCE_RACES) do if math.floor(mask / b) % 2 == 1 then a = true end end
+  if h and not a then return "h" elseif a and not h then return "a" end
+  return ""
+end
+local function list(t) local o = {} for _, v in ipairs(t or {}) do o[#o + 1] = tostring(v) end return table.concat(o, " ") end
+
+local rows, kept, skipped, withObj, noObj, objSource = {}, 0, {}, 0, 0, 0
 local function skip(why) skipped[why] = (skipped[why] or 0) + 1 end
 local function clean(s) return ((s or ""):gsub("[|\n\r]", " "):gsub("\\", "/"):gsub('"', "''")) end
 local function num(s) return tonumber(s) or 0 end
@@ -183,18 +257,22 @@ table.sort(sorted)
 for _, id in ipairs(sorted) do
   local c = qc[id] and split(qc[id], "|")
   local f = qf[id] and split(qf[id], "|")
-  local title = (f and f[1] ~= "" and f[1]) or (c and c[1]) or ""
-  local level = (f and num(f[2]) > 0 and num(f[2])) or (c and num(c[2])) or 0
-  local minLv = (f and num(f[3]) > 0 and num(f[3])) or (c and num(c[3])) or 0
-  local side = (c and c[4] ~= "" and c[4]) or (f and f[11]) or ""
-  local races = c and num(c[6]) or 0
-  local classes = c and num(c[5]) or 0
+  local Q = Qq[id]
+  local title = (f and f[1] ~= "" and f[1]) or (c and c[1]) or (Q and Q[1]) or ""
+  local level = (f and num(f[2]) > 0 and num(f[2])) or (c and num(c[2]) > 0 and num(c[2])) or (Q and num(Q[5])) or 0
+  local minLv = (f and num(f[3]) > 0 and num(f[3])) or (c and num(c[3]) > 0 and num(c[3])) or (Q and num(Q[4])) or 0
+  local side = (c and c[4] ~= "" and c[4]) or (f and f[11] ~= "" and f[11]) or (Q and questieSide(Q[6])) or ""
+  local races = (c and num(c[6]) > 0 and num(c[6])) or (Q and num(Q[6])) or 0
+  local classes = (c and num(c[5]) > 0 and num(c[5])) or (Q and num(Q[7])) or 0
   local flags = c and c[14] or ""
+  if Q and Q[24] and Q[24] % 2 == 1 and not flags:find("p") then flags = flags .. "p" end
+  local exclTo = Q and list(Q[16]) or ""
   local starts = (f and f[5] ~= "" and f[5]) or (c and c[10]) or ""
   local ends = (f and f[6] ~= "" and f[6]) or (c and c[11]) or ""
-  local pre = c and c[7] or ""
+  local pre = (c and c[7]) or (Q and list(Q[12])) or ""
+  if pre == "" and not c and Q then pre = list(Q[12]) end
   if f and num(f[9]) > 0 and not (" " .. pre .. " "):find(" " .. f[9] .. " ", 1, true) then pre = (pre .. " " .. f[9]):gsub("^ ", "") end
-  local preAny = c and c[8] or ""
+  local preAny = (c and c[8]) or (Q and list(Q[13])) or ""
   local excl = c and num(c[9]) or 0
 
   local poi, seen = ns.qfPoi and ns.qfPoi[id], ns.qfSeen and ns.qfSeen[id]
@@ -202,7 +280,13 @@ for _, id in ipairs(sorted) do
   if #s == 0 then s = whoSpots(starts) end
   local e = (poi and poi.e and spots(poi.e)) or (seen and seen.e and spots(seen.e)) or whoSpots(ends)
   if #e == 0 then e = whoSpots(ends) end
+  if #s == 0 and Q then s = qWho(Q[2]) end
+  if #e == 0 and Q then e = qWho(Q[3]) end
   local sp, ep = centre(s), centre(e)
+  local giver, ender = whoName(starts), whoName(ends)
+  if giver == "" and Q then giver = qWhoName(Q[2]) end
+  if ender == "" and Q then ender = qWhoName(Q[3]) end
+  if starts == "" and Q and Q[2] and Q[2][3] and Q[2][3][1] then starts = "i" .. Q[2][3][1] end
 
   local olist, effort = {}, nil
   for _, src2 in ipairs({ poi, seen }) do
@@ -213,6 +297,19 @@ for _, id in ipairs(sorted) do
   local cl, ce = classicObjectives(c and c[12], level)
   if #olist == 0 then olist = cl end
   if c and c[12] ~= "" then effort = ce else effort = foreverEffort(id, level) or ce end
+  if Q then
+    unmapped = false
+    local ql, qe = qObjectives(Q, level)
+    if #olist == 0 then olist = ql; if #ql > 0 then objSource = (objSource or 0) + 1 end end
+    if (not effort or effort == 0) and not (c and c[12] ~= "") and not foreverEffort(id, level) then effort = qe end
+    local o = Q[10]
+    local noObjectives = (not o or next(o) == nil) and not Q[9]
+    if #olist == 0 and noObjectives then
+      effort = 0 -- a talk or delivery quest: QuestieDB lists nothing to do but hand it in (the item comes with the quest)
+    elseif #olist == 0 and unmapped and not flags:find("[dr]") then
+      flags = flags .. "d" -- everything it needs is inside an instance
+    end
+  end
   local op = centre(olist)
 
   local xp = ns.qxp and ns.qxp.q and ns.qxp.q[id]
@@ -226,8 +323,9 @@ for _, id in ipairs(sorted) do
   local zone = zones[smap]
   if side == "a" then skip("alliance")
   elseif races > 0 and races % 256 ~= 0 and not hordeRaces(races) then skip("races not horde")
-  elseif side == "" and (not zone or zone.side == "A") and races == 0 then skip("unknown side")
-  elseif side == "" and zone and zone.side ~= "H" and races == 0 then skip("unknown side")
+  -- No faction anywhere: QuestieDB listing it for every race means it's neutral; otherwise only trust Horde zones.
+  elseif side == "" and races == 0 and not Q and (not zone or zone.side ~= "H") then skip("unknown side")
+  elseif side == "" and races == 0 and Q and zone and zone.side == "A" then skip("neutral quest in an Alliance zone")
   elseif ns.qcGone and ns.qcGone[id] then skip("not offered in Forever")
   elseif flags:find("p") then skip("repeatable")
   elseif level <= 0 then skip("no level")
@@ -236,10 +334,11 @@ for _, id in ipairs(sorted) do
   else
     kept = kept + 1
     local function xy(p) return p and string.format("%d|%.1f|%.1f", p[1], p[2], p[3]) or "0|0|0" end
-    rows[#rows + 1] = string.format('[%d]="%s|%d|%d|%d|%d|%s|%s|%d|%s|%s|%s|%d|%d|%s|%s|%s|%s"', id,
+    rows[#rows + 1] = string.format('[%d]="%s|%d|%d|%.0f|%.0f|%s|%s|%d|%s|%s|%s|%d|%d|%s|%s|%s|%s|%s"', id,
       clean(title), level, minLv, classes, races, pre, preAny, excl,
       xy(sp), xy(ep), xy(op), xp or 0, math.floor((effort or 0) + 0.5), flags, startKind,
-      clean(whoName(starts)), clean(whoName(ends)))
+      clean(giver), clean(ender), exclTo)
+    if op then withObj = withObj + 1 elseif (effort or 0) > 0 and not flags:find("[dr]") then noObj = noObj + 1 end
   end
 end
 
@@ -260,9 +359,11 @@ table.sort(paceRows)
 local fh = assert(io.open(out, "w"))
 fh:write("-- Data from ForeverDB.net (https://foreverdb.net), built ", os.date("!%Y-%m-%d"), " from ForeverDB's addon data.\n")
 fh:write("-- GPL-3.0 (CMaNGOS classic-db and ForeverDB). Reuse requires this credit: \"Data from ForeverDB.net\". Do not edit:\n")
+if qdb then fh:write("-- Gaps filled from QuestieDB (https://github.com/Questie/QuestieDB, GPL-3.0).\n") end
 fh:write("-- scripts/build-forever-route.lua makes it.\n")
 fh:write("-- q[quest] = \"title|level|min level|classes mask|races mask|needs all|needs one of|exclusive group|start map|x|y|\n")
-fh:write("--   end map|x|y|objective map|x|y|xp|effort seconds|flags (g group, d dungeon, r raid)|start kind (n/o/i)|giver|ender\"\n")
+fh:write("--   end map|x|y|objective map|x|y|xp|effort seconds|flags (g group, d dungeon, r raid)|start kind (n/o/i)|giver|ender|\n")
+fh:write("--   quests you can't take once you've done one of these\"\n")
 fh:write("-- maps[uiMap] = {continent, world X at top, world Y at left, height, width (yards), name, side, lo, hi}\n")
 fh:write("local _, ns = ...\n")
 fh:write(string.format('ns.data = { built = "%s", quests = %d,\n', os.date("!%Y-%m-%d"), kept))
@@ -272,5 +373,5 @@ fh:write("pace = {", table.concat(paceRows, ","), "},\n")
 fh:write("}\n")
 fh:close()
 
-io.stderr:write(string.format("Forever Route data: %d quests kept\n", kept))
+io.stderr:write(string.format("Forever Route data: %d quests kept, %d with an objective spot, %d with objectives but no spot (%d spots from QuestieDB)\n", kept, withObj, noObj, objSource))
 for why, n in pairs(skipped) do io.stderr:write(string.format("  skipped %d: %s\n", n, why)) end
