@@ -11,25 +11,19 @@ jobs:
           mkdir d && cd d
           curl -sS -A forever-route-builder https://foreverdb.net/downloads/addon-manifest.json -o manifest.json
           python3 - <<'PY'
-          import json,urllib.request,re
+          import json,urllib.request
           m=json.load(open('manifest.json'))
+          def get(u): return urllib.request.urlopen(urllib.request.Request('https://foreverdb.net/'+u,headers={'User-Agent':'forever-route-builder'})).read()
           for f in m['data']['files']:
               name=f['path'].split('/')[-1]
-              if name.startswith('L10n') or name.startswith('Routes_') or name in ('SearchNames.lua',): continue
-              s=urllib.request.urlopen(urllib.request.Request('https://foreverdb.net/'+f['url'],headers={'User-Agent':'forever-route-builder'})).read().decode('utf-8','replace')
-              open(name,'w').write(s)
-              print('=====',name,len(s))
-              # comment lines (format docs) and ns.* assignments
-              for line in s.split('\n'):
-                  if line.startswith('--') and not line.startswith('-- Data: ForeverDB'): print('  C',line[:300])
-                  elif re.match(r'\s*ns\.[A-Za-z_.\[\]"0-9]+\s*=',line): print('  A',line[:200])
-              for mm in list(re.finditer(r'.{0,80}\b3287\b.{0,160}',s))[:3]: print('  3287>',mm.group(0)[:260])
+              if name in ('QuestClassic.lua','QuestForever.lua','QuestXP.lua','Zones.lua','RouteMaps.lua','Quests.lua','QuestOffers.lua','Travel.lua'):
+                  open(name,'wb').write(get(f['url']))
+          open('fdb.zip','wb').write(get(m['addon']['url']))
           PY
-          python3 - <<'PY'
-          import re
-          s=open('QuestGuide.lua').read()
-          S=re.search(r'ns\.qgS = \{\n(.*?)\n\}',s,re.S).group(1)
-          strs=re.findall(r'^"((?:[^"\\]|\\.)*)",?$',S,re.M)
-          print('nstrings',len(strs))
-          for i in (805,815,816,2100,2101,867,46,38): print(i, strs[i-1][:200] if i-1<len(strs) else None)
-          PY
+          unzip -l fdb.zip | head -20
+          for t in $(unzip -Z1 fdb.zip | grep -i '\.toc$'); do echo "== $t"; unzip -p fdb.zip "$t" | head -15; done
+          tar czf data.tgz *.lua
+          ls -la
+          echo BEGIN_DATA
+          base64 -w 200 data.tgz
+          echo END_DATA
