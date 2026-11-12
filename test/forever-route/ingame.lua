@@ -1,6 +1,20 @@
 -- Loads the addon against a stand-in for the game's API and runs its events, the window, the arrow and /fr commands.
 -- lua5.1 test/forever-route/ingame.lua <Data.lua>
 local dataFile = arg[1]
+-- Like the game's Lua: %d (and %x, %c) refuse a number with a fraction.
+local rawFormat = string.format
+string.format = function(fmt, ...)
+  local args, i = { ... }, 0
+  for spec in fmt:gmatch("%%[-+ #0]*%d*%.?%d*(%a)") do
+    i = i + 1
+    local v = args[i]
+    if (spec == "d" or spec == "i" or spec == "x" or spec == "X" or spec == "c") and type(v) == "number" and v ~= math.floor(v) then
+      error("bad argument #" .. (i + 1) .. " to 'format' (number has no integer representation)", 2)
+    end
+  end
+  return rawFormat(fmt, ...)
+end
+local chatErrors = 0
 local timers, scripts, frames = {}, {}, {}
 local function mock(name)
   local o = { _scripts = {}, _shown = true, _name = name }
@@ -29,7 +43,7 @@ CreateFrame = function(_, name) local f = mock(name); if name then _G[name] = f 
 UIParent = mock("UIParent"); GameTooltip = mock("GameTooltip"); Minimap = mock("Minimap")
 UISpecialFrames = {}; tinsert = table.insert; GetXPExhaustion = function() return 3000 end
 GetCursorPosition = function() return 600, 400 end; GetUnitSpeed = function() return 7 end
-DEFAULT_CHAT_FRAME = { AddMessage = function(_, m) print("CHAT", (m:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""))) end }
+DEFAULT_CHAT_FRAME = { AddMessage = function(_, m) if m:find("error in") then chatErrors = chatErrors + 1 end; print("CHAT", (m:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""))) end }
 C_Timer = { After = function(_, fn) timers[#timers + 1] = fn end }
 local level, xp = 20, 1000
 local px, py = 0.517, 0.309
@@ -111,4 +125,5 @@ ForeverRouteMinimapButton._scripts.OnDragStart(ForeverRouteMinimapButton); Forev
 print("minimap angle", math.floor(ns.opts().minimapAngle))
 px, py = 0.5185, 0.304 -- stand on the step
 ForeverRouteArrow._scripts.OnUpdate(ForeverRouteArrow, 1); print("arrow near:", plain(ForeverRouteArrow.dist._text))
+assert(chatErrors == 0, chatErrors .. " addon error(s) reported in chat")
 print("ok")

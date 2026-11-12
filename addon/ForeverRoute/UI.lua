@@ -24,7 +24,7 @@ local ARROW_TEX = "Interface\\Minimap\\MinimapArrow"
 local frame, arrow, minimapButton, toast
 local currentKey
 
-local function hex(c) return string.format("|cff%02x%02x%02x", c[1] * 255, c[2] * 255, c[3] * 255) end
+local function hex(c) return string.format("|cff%02x%02x%02x", ns.int(c[1] * 255), ns.int(c[2] * 255), ns.int(c[3] * 255)) end
 local function plain(s) return (s or ""):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "") end
 
 -- Quest difficulty colour, like the quest log's.
@@ -42,7 +42,7 @@ end
 
 local function fmtTime(sec)
   sec = math.max(0, sec or 0)
-  if sec < 60 then return string.format("%ds", sec) end
+  if sec < 60 then return string.format("%ds", math.floor(sec)) end
   if sec < 3600 then return string.format("%d min", math.floor(sec / 60 + 0.5)) end
   return string.format("%dh %02dm", math.floor(sec / 3600), math.floor(sec % 3600 / 60))
 end
@@ -59,9 +59,9 @@ local function stepDetail(s)
   if s.kind == "accept" then return q.giver ~= "" and ("from " .. q.giver) or "" end
   if s.kind == "turnin" then return q.ender ~= "" and ("to " .. q.ender) or "" end
   if s.kind == "do" then return (q.om and q.om > 0) and "objectives" or "objectives (the data has no spot for them: see your quest log)" end
-  if s.kind == "travel" then return string.format("%d worthwhile quests start there", s.count or 0) end
-  if s.kind == "abandon" then return string.format("too low now: %d XP left in it", s.xp or 0) end
-  if s.kind == "grind" then return string.format("no worthwhile quests left until level %d", s.toLevel or 0) end
+  if s.kind == "travel" then return string.format("%d worthwhile quests start there", ns.int(s.count)) end
+  if s.kind == "abandon" then return string.format("too low now: %d XP left in it", ns.int(s.xp)) end
+  if s.kind == "grind" then return string.format("no worthwhile quests left until level %d", ns.int(s.toLevel)) end
   return ""
 end
 
@@ -417,7 +417,7 @@ local function updateCard(s)
   card:SetHeight(58 + n * 14)
 end
 
-function ns.UpdateUI()
+local function updateUI()
   if not frame then return end
   local o = ns.opts()
   frame:SetScale(o.scale or 1)
@@ -428,7 +428,7 @@ function ns.UpdateUI()
   updateBar()
   if sum then
     local last = steps[#steps]
-    frame.plan:SetText(string.format("Route: level %d%s in about %s, %d steps planned", sum.toLevel,
+    frame.plan:SetText(string.format("Route: level %d%s in about %s, %d steps planned", ns.int(sum.toLevel),
       (sum.toLevel > sum.fromLevel and last and last.levelPct) and (" (" .. last.levelPct .. "%)") or "", fmtTime(last and last.time or 0), #steps))
   else
     frame.plan:SetText("")
@@ -471,6 +471,7 @@ function ns.UpdateUI()
   frame:SetHeight(h)
   setWaypoint(steps[1])
 end
+ns.UpdateUI = ns.guard("the window", updateUI)
 
 -- ---------------------------------------------------------------- the arrow
 
@@ -501,7 +502,7 @@ local function createArrow()
   arrow.dist = arrow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
   arrow.dist:SetPoint("TOP", arrow.title, "BOTTOM", 0, -2)
   local acc, t = 0, 0
-  arrow:SetScript("OnUpdate", function(self, elapsed)
+  arrow:SetScript("OnUpdate", ns.guard("the arrow", function(self, elapsed)
     acc, t = acc + elapsed, t + elapsed
     if acc < 0.04 then return end
     acc = 0
@@ -551,8 +552,8 @@ local function createArrow()
     end
     local speed = (GetUnitSpeed and GetUnitSpeed("player")) or 0
     if speed < 1 then speed = 7 end
-    self.dist:SetText(string.format("%d yd  |cff9d9d9d~%s|r", d, fmtTime(d / speed)))
-  end)
+    self.dist:SetText(string.format("%d yd  |cff9d9d9d~%s|r", ns.int(d), fmtTime(d / speed)))
+  end))
   local p = ForeverRouteDB.arrowPos
   if p then arrow:ClearAllPoints(); arrow:SetPoint(p[1], UIParent, p[2], p[3], p[4]) end
 end
@@ -582,13 +583,15 @@ local function createMinimapButton()
     b:SetPoint("CENTER", Minimap, "CENTER", math.cos(a) * r, math.sin(a) * r)
   end
   b:SetScript("OnDragStart", function(self)
-    self:SetScript("OnUpdate", function()
+    self:SetScript("OnUpdate", ns.guard("the minimap button", function()
       local mx, my = Minimap:GetCenter()
       local cx, cy = GetCursorPosition()
       local s = Minimap:GetEffectiveScale()
-      ns.opts().minimapAngle = math.deg(math.atan2(cy / s - my, cx / s - mx))
-      place()
-    end)
+      if mx and cx and s and s > 0 then
+        ns.opts().minimapAngle = math.deg(math.atan2(cy / s - my, cx / s - mx))
+        place()
+      end
+    end))
   end)
   b:SetScript("OnDragStop", function(self) self:SetScript("OnUpdate", nil) end)
   b:SetScript("OnClick", function(_, button)
@@ -624,7 +627,7 @@ function ns.CreateUI()
   local tick = CreateFrame("Frame")
   tick:RegisterEvent("PLAYER_XP_UPDATE")
   tick:RegisterEvent("UPDATE_EXHAUSTION")
-  tick:SetScript("OnEvent", function() if frame:IsShown() then updateBar() end end)
+  tick:SetScript("OnEvent", ns.guard("the XP bar", function() if frame:IsShown() then updateBar() end end))
   ns.RequestReplan("login")
 end
 

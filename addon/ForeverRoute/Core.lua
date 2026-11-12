@@ -20,6 +20,23 @@ local function msg(text)
 end
 ns.msg = msg
 
+-- Whole numbers for string.format's %d: the game's Lua refuses a number with a fraction there.
+function ns.int(n) return math.floor((tonumber(n) or 0) + 0.5) end
+
+-- Runs fn safely. A bug shows once in chat (with where it happened) instead of flooding the game's error counter,
+-- and the rest of the addon keeps working.
+local reported = {}
+function ns.guard(where, fn)
+  return function(...)
+    local ok, err = pcall(fn, ...)
+    if not ok and not reported[where] then
+      reported[where] = true
+      msg("|cffff6060error in " .. where .. "|r: " .. tostring(err) .. " (shown once; please send this line to the author)")
+    end
+    return ok
+  end
+end
+
 local function bitOf(id) return id and id > 0 and 2 ^ (id - 1) or 0 end
 
 -- Completed quests: the game's list, plus what we see handed in this session.
@@ -157,7 +174,7 @@ function ns.RequestReplan(reason)
   pending = true
   C_Timer.After(0.4, function()
     pending = false
-    ns.Replan(reason)
+    ns.guard("planning", ns.Replan)(reason)
   end)
 end
 
@@ -171,7 +188,7 @@ f:RegisterEvent("QUEST_REMOVED")
 f:RegisterEvent("QUEST_LOG_UPDATE")
 f:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 local logThrottle = 0
-f:SetScript("OnEvent", function(_, event, a1)
+f:SetScript("OnEvent", ns.guard("events", function(_, event, a1)
   if event == "PLAYER_LOGIN" then
     ns.opts(); ns.skipList()
     if not ns.data then
@@ -191,11 +208,11 @@ f:SetScript("OnEvent", function(_, event, a1)
   else
     ns.RequestReplan(event)
   end
-end)
+end))
 
 -- /fr commands
 SLASH_FOREVERROUTE1, SLASH_FOREVERROUTE2 = "/fr", "/foreverroute"
-SlashCmdList.FOREVERROUTE = function(input)
+SlashCmdList.FOREVERROUTE = ns.guard("/fr", function(input)
   local cmd, rest = (input or ""):lower():match("^%s*(%S*)%s*(.-)%s*$")
   local o = ns.opts()
   if cmd == "" or cmd == "show" or cmd == "hide" then
@@ -234,4 +251,4 @@ SlashCmdList.FOREVERROUTE = function(input)
     msg("/fr  show or hide | /fr options  settings window | /fr skip  skip the current quest | /fr unskip | /fr minxp 60  lowest XP % worth doing |"
       .. " /fr above 3  levels above you | /fr dungeons | /fr group | /fr arrow | /fr pin | /fr refresh | /fr reset")
   end
-end
+end)
