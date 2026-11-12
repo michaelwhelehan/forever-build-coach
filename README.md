@@ -61,6 +61,12 @@ items as one line. Copy it into Claude and ask for upgrades; it skips the armory
 1. Copy `addon/ForeverBuildCoach` into your game's `Interface/AddOns/` folder and `/reload`.
 2. Type `/fbc`, press Ctrl+C, and paste the line to Claude: *"Find upgrades for this gear, I'm frost."*
 
+### Forever Route (levelling guide)
+
+[`addon/ForeverRoute`](addon/ForeverRoute/README.md) is a second addon: an adaptive Horde questing route planned
+from ForeverDB.net's quest data, with an arrow to each step. It re-plans as you level, so quests that went grey after
+a dungeon drop out. Download `ForeverRoute.zip` from the **Forever Route (latest)** release, unzip into `AddOns`, type `/fr`.
+
 ## Connect your Claude
 
 Ask whoever hosts the server for the URL. It looks like `https://<host>/mcp/<access-token>`.

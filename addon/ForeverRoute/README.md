@@ -1,0 +1,52 @@
+# Forever Route
+
+An adaptive Horde questing route for WoW: Forever, planned in the game from ForeverDB.net's quest data.
+It shows the next steps (accept, do, turn in, go to a zone), an arrow to the current step and a map pin.
+
+It plans again whenever something changes: you level up (a dungeon run included), accept, finish or hand in a quest,
+or change zone. Quests that went grey or give too little XP drop out of the route, along with the follow-ups they
+unlock, and quests already in your log that aren't worth it any more show up as **Abandon** steps.
+
+## Install
+1. Download `ForeverRoute.zip` from the repository's **Forever Route (latest)** release
+   (rebuilt daily with ForeverDB's latest data), or from the *Forever Route addon* workflow run.
+2. Unzip it into `World of Warcraft/_forever_/Interface/AddOns/`, so you get `AddOns/ForeverRoute/ForeverRoute.toc`.
+3. Restart the game or `/reload`.
+
+## Use
+- `/fr` shows or hides the window and the arrow. Drag either to move it.
+- Hover a step for details (quest level, XP, objectives from your log). Right-click a step, or press **Skip**,
+  to leave a quest out (`/fr unskip` brings them all back).
+- `/fr minxp 60`: leave out quests worth less than this % of their XP. ForeverDB's rule: 100% up to 5 levels
+  below you, then 80, 60, 40, 20, 10%. 60 means quests up to 7 levels below you.
+- `/fr above 3`: take quests up to this many levels above you.
+- `/fr dungeons`, `/fr group`: include dungeon or group (elite) quests (off by default).
+- `/fr arrow`, `/fr pin`: arrow and map pin on or off. TomTom is used too when it's installed.
+- `/fr refresh`, `/fr reset`.
+
+## How the route is made
+For each step it looks at every action you could take: hand in a finished quest, do the objectives of one in your
+log, or pick up a quest you can take and that's worth it at your level. It takes the nearest (stops within 45 yards
+count as one), simulates the XP, and repeats for 40 steps. When nothing worthwhile is left nearby it picks the zone
+with the most quest XP for your level, less the travel to get there. With no quests left for your level it says to
+grind or run a dungeon.
+
+Limits: objective spots come from Classic spawn data where Forever's own aren't known yet (those steps say "spot
+unknown" and point at the quest's ender); XP to level after your current one is Classic's table; travel between
+zones is a straight-line estimate. Quests that start from an item you loot aren't planned, but are followed once
+they're in your log.
+
+## Build it yourself
+Needs Lua 5.1 and curl:
+
+    scripts/fetch-foreverdb-data.sh .foreverdb-data
+    lua5.1 scripts/build-forever-route.lua .foreverdb-data addon/ForeverRoute/Data.lua
+    lua5.1 test/forever-route/ingame.lua addon/ForeverRoute/Data.lua
+    lua5.1 test/forever-route/simulate.lua addon/ForeverRoute/Data.lua 1 200
+
+`Data.lua` isn't committed: it's generated from ForeverDB's files.
+
+## Licence and credit
+Data from [ForeverDB.net](https://foreverdb.net), including Classic data from CMaNGOS classic-db. That data is GPL-3.0
+with a credit term, so this addon is GPL-3.0 too (the release zip has the licence text), and the window shows
+"Data from ForeverDB.net". The rest of this repository stays MIT.
