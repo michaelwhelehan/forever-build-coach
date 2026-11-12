@@ -289,7 +289,8 @@ for _, id in ipairs(sorted) do
   if starts == "" and Q and Q[2] and Q[2][3] and Q[2][3][1] then starts = "i" .. Q[2][3][1] end
 
   local olist, effort = {}, nil
-  for _, src2 in ipairs({ poi, seen }) do
+  -- (not ipairs: poi is often nil, which would end the loop before players' sightings)
+  for _, src2 in pairs({ poi or false, seen or false }) do
     if src2 and src2.o and #olist == 0 then
       for _, v in pairs(src2.o) do for _, p in ipairs(spots(v)) do olist[#olist + 1] = p end end
     end

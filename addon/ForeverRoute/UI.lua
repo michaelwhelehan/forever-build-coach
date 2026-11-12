@@ -58,7 +58,7 @@ local function stepDetail(s)
   local q = s.q
   if s.kind == "accept" then return q.giver ~= "" and ("from " .. q.giver) or "" end
   if s.kind == "turnin" then return q.ender ~= "" and ("to " .. q.ender) or "" end
-  if s.kind == "do" then return (q.om and q.om > 0) and "objectives" or "objectives (spot unknown: shown at the quest's ender)" end
+  if s.kind == "do" then return (q.om and q.om > 0) and "objectives" or "objectives (the data has no spot for them: see your quest log)" end
   if s.kind == "travel" then return string.format("%d worthwhile quests start there", s.count or 0) end
   if s.kind == "abandon" then return string.format("too low now: %d XP left in it", s.xp or 0) end
   if s.kind == "grind" then return string.format("no worthwhile quests left until level %d", s.toLevel or 0) end
@@ -144,11 +144,16 @@ local function showTooltip(owner, s)
   GameTooltip:Show()
 end
 
+-- A "do" step whose objective spot the data doesn't know: no arrow or pin, rather than pointing at the quest giver.
+local function spotUnknown(s)
+  return s and s.kind == "do" and s.q and not (s.q.om and s.q.om > 0)
+end
+
 local function setWaypoint(s)
   local key = s and s.map and (s.kind .. (s.q and s.q.id or "") .. s.map .. s.x .. s.y)
   if key == currentKey then return end
   currentKey = key
-  if not s or not s.map or s.map == 0 then return end
+  if not s or not s.map or s.map == 0 or spotUnknown(s) then return end
   local o = ns.opts()
   if o.mapPin and C_Map and C_Map.SetUserWaypoint and UiMapPoint and C_Map.CanSetUserWaypointOnMap and C_Map.CanSetUserWaypointOnMap(s.map) then
     pcall(function()
@@ -399,7 +404,7 @@ local function updateCard(s)
   card.kind:SetText(hex(k.color) .. k.label:upper() .. "|r" .. lv .. xp)
   card.title:SetText(stepTitle(s))
   local detail = stepDetail(s)
-  local where = coords(s)
+  local where = spotUnknown(s) and "" or coords(s)
   card.detail:SetText(detail ~= "" and where ~= "" and (detail .. "  -  " .. where) or (detail .. where))
   local lines = {}
   if s.q and ns.log and ns.log[s.q.id] and (s.kind == "do" or s.kind == "turnin") then
@@ -501,6 +506,12 @@ local function createArrow()
     if acc < 0.04 then return end
     acc = 0
     local s = ns.steps and ns.steps[1]
+    if spotUnknown(s) and ns.opts().arrow then
+      self.tex:Hide(); self.glow:SetAlpha(0)
+      self.title:SetText("|cffffd100Do|r " .. stepTitle(s))
+      self.dist:SetText("|cff9d9d9dspot unknown: see your quest log|r")
+      return
+    end
     if not s or not s.map or s.map == 0 or not ns.opts().arrow then
       self.tex:Hide(); self.glow:SetAlpha(0); self.title:SetText(""); self.dist:SetText(""); return
     end
