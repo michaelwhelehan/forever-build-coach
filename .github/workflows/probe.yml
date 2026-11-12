@@ -9,7 +9,7 @@ jobs:
     steps:
       - run: |
           mkdir d && cd d
-          curl -sS https://foreverdb.net/downloads/addon-manifest.json -o manifest.json
+          curl -sS -A forever-route-builder https://foreverdb.net/downloads/addon-manifest.json -o manifest.json
           python3 - <<'PY'
           import json,urllib.request,re
           m=json.load(open('manifest.json'))
