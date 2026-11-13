@@ -152,6 +152,16 @@ fire("GOSSIP_SHOW"); flush()
 for _, s in ipairs(ns.steps) do if s.q and s.q.id == 6981 then first = s break end end
 print("after Sputtervalve:", plain(ns.StepText(first, true)))
 assert(first.kind == "turnin", "then hand it in to Falla Sagewind")
+-- A flight: take off from a "Fly to" step, plan from where it lands, plan again on landing.
+local onTaxi = false
+UnitOnTaxi = function() return onTaxi end
+ns.steps = { { kind = "ride", mode = "fly", toMap = 1413, toX = 63.1, toY = 37.1, toName = "Ratchet", map = 1413, x = 51.5, y = 30.4 } }
+onTaxi = true; fire("PLAYER_CONTROL_LOST"); flush()
+assert(ns.flyingTo and ns.flyingTo.name == "Ratchet" and ns.planPos.x == 63.1, "plans from the landing spot")
+ns.UpdateUI(); ForeverRouteArrow._scripts.OnUpdate(ForeverRouteArrow, 1)
+print("in flight:", plain(ForeverRouteFrame.card.kind._text), "|", plain(ForeverRouteArrow.title._text))
+onTaxi = false; mapNow, px, py = 1413, 0.631, 0.371; fire("PLAYER_CONTROL_GAINED"); flush()
+assert(not ns.flyingTo and math.abs(ns.planPos.x - 63.1) < 0.01, "plans again on landing")
 SlashCmdList.FOREVERROUTE("options"); assert(ForeverRouteSettings, "settings window")
 for _, child in pairs(ForeverRouteSettings) do end
 ForeverRouteMinimapButton._scripts.OnEnter(ForeverRouteMinimapButton)

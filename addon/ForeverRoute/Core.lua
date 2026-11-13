@@ -176,6 +176,42 @@ local function checkViaTalk()
   end
 end
 
+function ns.onTaxi() return UnitOnTaxi and UnitOnTaxi("player") and true or false end
+
+-- Taking a flight: remember where it lands (from the route's "Fly to" step). Landing: plan again.
+local function controlChanged(lost)
+  if lost and ns.onTaxi() then
+    local s = ns.steps and ns.steps[1]
+    if s and s.kind == "ride" and s.mode == "fly" and s.toMap and s.toX then
+      ns.flyingTo = { map = s.toMap, x = s.toX, y = s.toY, name = s.toName }
+    else
+      ns.flyingTo = nil
+    end
+  elseif not lost then
+    ns.flyingTo = nil
+  end
+  ns.RequestReplan(lost and "takeoff" or "landed")
+end
+ns.controlChanged = controlChanged
+
+-- Walking (or riding a boat) away from where the route was planned also means planning again.
+local mover = CreateFrame("Frame")
+local moverAcc, wasOnTaxi = 0, false
+mover:SetScript("OnUpdate", function(_, elapsed)
+  moverAcc = moverAcc + elapsed
+  if moverAcc < 2 then return end
+  moverAcc = 0
+  local ok = pcall(function()
+    local taxi = ns.onTaxi()
+    if wasOnTaxi and not taxi then ns.flyingTo = nil; ns.RequestReplan("landed") end
+    wasOnTaxi = taxi
+    if taxi or not ns.planPos or not ns.planPos.map or not ns.steps then return end
+    local p = position()
+    if p.map and ns.yards(ns.planPos.map, ns.planPos.x, ns.planPos.y, p.map, p.x, p.y) > 250 then ns.RequestReplan("moved") end
+  end)
+  if not ok then moverAcc = -60 end -- something's off with the position API: try again in a minute
+end)
+
 -- The game's objective lines for a quest in your log: { { text, finished }, ... }
 function ns.objectives(questID)
   local out = {}
@@ -220,6 +256,10 @@ function ns.Replan(reason)
   -- Only the quests the planner knows about matter; check them against the game.
   for id in pairs(Q) do if isDone(id) then done[id] = true end end
   local pos = position()
+  -- In flight: plan from where you'll land, not from the air.
+  local flying = ns.onTaxi() and ns.flyingTo
+  if flying then pos = { map = flying.map, x = flying.x, y = flying.y } end
+  ns.planPos = { map = pos.map, x = pos.x, y = pos.y }
   local opts = {}
   for k, v in pairs(ns.opts()) do opts[k] = v end
   opts.skip = ns.skipList()
@@ -278,7 +318,8 @@ f:RegisterEvent("QUEST_REMOVED")
 f:RegisterEvent("QUEST_LOG_UPDATE")
 f:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 -- Travel: flight paths you know, and where your hearthstone goes. Some clients lack an event: register what exists.
-for _, ev in ipairs({ "TAXIMAP_OPENED", "HEARTHSTONE_BOUND", "UNIT_SPELLCAST_SUCCEEDED", "GOSSIP_SHOW", "QUEST_GREETING", "QUEST_DETAIL" }) do pcall(f.RegisterEvent, f, ev) end
+for _, ev in ipairs({ "TAXIMAP_OPENED", "HEARTHSTONE_BOUND", "UNIT_SPELLCAST_SUCCEEDED", "GOSSIP_SHOW", "QUEST_GREETING", "QUEST_DETAIL",
+  "PLAYER_CONTROL_LOST", "PLAYER_CONTROL_GAINED" }) do pcall(f.RegisterEvent, f, ev) end
 local logThrottle = 0
 f:SetScript("OnEvent", ns.guard("events", function(_, event, a1, ...)
   if event == "PLAYER_LOGIN" then
@@ -298,6 +339,8 @@ f:SetScript("OnEvent", ns.guard("events", function(_, event, a1, ...)
     ns.RequestReplan(event)
   elseif event == "GOSSIP_SHOW" or event == "QUEST_GREETING" or event == "QUEST_DETAIL" then
     checkViaTalk()
+  elseif event == "PLAYER_CONTROL_LOST" or event == "PLAYER_CONTROL_GAINED" then
+    controlChanged(event == "PLAYER_CONTROL_LOST")
   elseif event == "HEARTHSTONE_BOUND" then
     rememberHearth(); ns.RequestReplan(event)
   elseif event == "UNIT_SPELLCAST_SUCCEEDED" then

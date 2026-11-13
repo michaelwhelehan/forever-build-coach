@@ -409,6 +409,18 @@ end
 
 local function updateCard(s)
   local card = frame.card
+  if s and ns.onTaxi and ns.onTaxi() then
+    local k = RIDE.fly
+    card.stripe:SetColorTexture(k.color[1], k.color[2], k.color[3], 1)
+    card.icon:SetTexture(k.icon)
+    card.kind:SetText(hex(k.color) .. "IN FLIGHT|r" .. (ns.flyingTo and ns.flyingTo.name and ("  to " .. ns.flyingTo.name) or ""))
+    card.title:SetText("Then: " .. stepTitle(s))
+    card.detail:SetText(plain(ns.StepText(s, true)))
+    card.dist:SetText("")
+    for _, t in ipairs(card.obj) do t:SetText("") end
+    card:SetHeight(58)
+    return
+  end
   if not s then
     card.stripe:SetColorTexture(C.dim[1], C.dim[2], C.dim[3], 1)
     card.icon:SetTexture(DONE_ICON)
@@ -532,6 +544,12 @@ local function createArrow()
     if acc < 0.04 then return end
     acc = 0
     local s = ns.steps and ns.steps[1]
+    if ns.onTaxi and ns.onTaxi() and ns.opts().arrow then
+      self.tex:Hide(); self.glow:SetAlpha(0)
+      self.title:SetText("|cff66d9ffIn flight|r" .. (ns.flyingTo and ns.flyingTo.name and (" to " .. ns.flyingTo.name) or ""))
+      self.dist:SetText(s and ("|cff9d9d9dthen: " .. plain(ns.StepText(s)) .. "|r") or "")
+      return
+    end
     if spotUnknown(s) and ns.opts().arrow then
       self.tex:Hide(); self.glow:SetAlpha(0)
       self.title:SetText("|cffffd100Do|r " .. stepTitle(s))
