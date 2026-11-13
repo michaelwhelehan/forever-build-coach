@@ -29,7 +29,7 @@ jobs:
           lua5.1 test/forever-route/simulate.lua addon/ForeverRoute/Data.lua 20 60 1413 51.7 30.9 | tail -8
       - name: Zip
         run: |
-          curl -fsS https://www.gnu.org/licenses/gpl-3.0.txt -o addon/ForeverRoute/COPYING.txt
+          cp /usr/share/common-licenses/GPL-3 addon/ForeverRoute/COPYING.txt || curl -fsS --max-time 60 https://www.gnu.org/licenses/gpl-3.0.txt -o addon/ForeverRoute/COPYING.txt
           cd addon && zip -qr ../ForeverRoute.zip ForeverRoute -x 'ForeverRoute/*.md' && cd .. && unzip -l ForeverRoute.zip
       - uses: actions/upload-artifact@v4
         with: { name: ForeverRoute, path: ForeverRoute.zip }
