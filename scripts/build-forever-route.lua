@@ -253,6 +253,7 @@ end
 local function list(t) local o = {} for _, v in ipairs(t or {}) do o[#o + 1] = tostring(v) end return table.concat(o, " ") end
 
 local rows, kept, skipped, withObj, noObj, objSource = {}, 0, {}, 0, 0, 0
+local movedFromEnder = 0
 local function skip(why) skipped[why] = (skipped[why] or 0) + 1 end
 local function clean(s) return ((s or ""):gsub("[|\n\r]", " "):gsub("\\", "/"):gsub('"', "''")) end
 local function num(s) return tonumber(s) or 0 end
@@ -296,10 +297,15 @@ for _, id in ipairs(sorted) do
   if starts == "" and Q and Q[2] and Q[2][3] and Q[2][3][1] then starts = "i" .. Q[2][3][1] end
 
   local olist, effort = {}, nil
+  local groups = {} -- spots per objective, to find where the work is
   -- (not ipairs: poi is often nil, which would end the loop before players' sightings)
   for _, src2 in pairs({ poi or false, seen or false }) do
     if src2 and src2.o and #olist == 0 then
-      for _, v in pairs(src2.o) do for _, p in ipairs(spots(v)) do olist[#olist + 1] = p end end
+      for _, v in pairs(src2.o) do
+        local g = spots(v)
+        for _, p in ipairs(g) do olist[#olist + 1] = p end
+        if #g > 0 then groups[#groups + 1] = g end
+      end
     end
   end
   local cl, ce = classicObjectives(c and c[12], level)
@@ -319,6 +325,20 @@ for _, id in ipairs(sorted) do
     end
   end
   local op = centre(olist)
+  -- Objectives that are partly "pick this up from the quest giver" (a crate, a manual) would put the spot next to the
+  -- ender, and the route would think you're done on arrival. Use the busiest objective away from the ender instead.
+  local function near(a, b) return a and b and a[1] == b[1] and (a[2] - b[2]) ^ 2 + (a[3] - b[3]) ^ 2 <= 25 end
+  if op and ep and near(op, ep) and #groups > 1 then
+    local best, bestN
+    for _, g in ipairs(groups) do
+      local c = centre(g)
+      if c and not near(c, ep) and (not bestN or #g > bestN) then best, bestN = c, #g end
+    end
+    if best then op = best; movedFromEnder = (movedFromEnder or 0) + 1 end
+  end
+  -- A dungeon quest whose only spot is at the quest giver (Blueleaf Tubers: the crate is in Ratchet, the tubers in
+  -- Razorfen Kraul): the data doesn't know where the work is, so say so rather than point at the giver.
+  if op and ep and near(op, ep) and (flags:find("d") or (c and (c[14] or ""):find("d"))) then op = nil; movedFromEnder = movedFromEnder + 1 end
   local via = ""
   if VIA[id] then
     local vp = centre(npcSpots(VIA[id]))
@@ -419,5 +439,6 @@ fh:write(travelOut)
 fh:write("}\n")
 fh:close()
 
+io.stderr:write(string.format("objective spot moved off the quest ender (or dropped, for dungeon quests) for %d quests\n", movedFromEnder or 0))
 io.stderr:write(string.format("Forever Route data: %d quests kept, %d with an objective spot, %d with objectives but no spot (%d spots from QuestieDB)\n", kept, withObj, noObj, objSource))
 for why, n in pairs(skipped) do io.stderr:write(string.format("  skipped %d: %s\n", n, why)) end

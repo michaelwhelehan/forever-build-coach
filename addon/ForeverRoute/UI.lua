@@ -76,6 +76,7 @@ local function stepDetail(s)
   if s.kind == "accept" then return q.giver ~= "" and ("from " .. q.giver) or "" end
   if s.kind == "turnin" then return q.ender ~= "" and ("to " .. q.ender) or "" end
   if s.kind == "do" and q.via ~= "" then return "talk to " .. q.via .. " first" end
+  if s.kind == "do" and not (q.om and q.om > 0) and q.flags:find("d") then return "objectives are inside a dungeon: see your quest log" end
   if s.kind == "do" then return (q.om and q.om > 0) and "objectives" or "objectives (the data has no spot for them: see your quest log)" end
   if s.kind == "travel" then return string.format("%d worthwhile quests start there", ns.int(s.count)) end
   if s.kind == "ride" then

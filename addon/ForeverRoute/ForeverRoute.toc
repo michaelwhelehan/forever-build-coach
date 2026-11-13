@@ -2,7 +2,7 @@
 ## Title: Forever Route
 ## Notes: An adaptive Horde questing route for WoW Forever, planned from ForeverDB.net's quest data. It re-plans as you level, accept and hand in quests, and drops quests that went grey (after a dungeon, say). Type /fr.
 ## Author: Forever Build Coach
-## Version: 0.2.1
+## Version: 0.2.2
 ## X-License: GPL-3.0
 ## X-Credits: Data from ForeverDB.net (https://foreverdb.net), including Classic data from CMaNGOS classic-db, and from QuestieDB (https://github.com/Questie/QuestieDB). All GPL-3.0.
 ## SavedVariables: ForeverRouteDB
