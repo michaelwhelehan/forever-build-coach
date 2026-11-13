@@ -232,7 +232,7 @@ function ns.Plan(state)
   local function go(m, x, y)
     if not m or m == 0 then return end
     local t, hearth = travelTime(m, x, y)
-    if t > 60 and sim.map then
+    if (t > 60 or hearth) and sim.map then
       for _, leg in ipairs(router:route(here(), spot(m, x, y), hearthReady())) do
         add({ kind = "ride", mode = leg.mode, name = leg.name, fromName = leg.fromName, toName = leg.toName, toMap = leg.toMap,
           toX = leg.toX, toY = leg.toY, map = leg.map, x = leg.x, y = leg.y })

@@ -199,5 +199,14 @@ ForeverRouteMinimapButton._scripts.OnDragStart(ForeverRouteMinimapButton); Forev
 print("minimap angle", math.floor(ns.opts().minimapAngle))
 px, py = 0.5185, 0.304 -- stand on the step
 ForeverRouteArrow._scripts.OnUpdate(ForeverRouteArrow, 1); print("arrow near:", plain(ForeverRouteArrow.dist._text))
+-- Hezrul Bloodmark killed, hand-in a few minutes north, hearth at Camp Taurajo: hand it in, don't hearth away.
+do
+  local done = {}
+  for id, q in pairs(ns.Q) do if q.lv <= 17 then done[id] = true end end
+  local steps = ns.Plan({ level = 20, xp = 1000, xpMax = ns.XP_TO_LEVEL[20], classBit = 128, raceBit = 16, map = 1413, x = 46.2, y = 40.8,
+    done = done, log = { [852] = { complete = true } }, opts = { skip = {} }, skills = { [197] = 101 },
+    hearth = { map = 1413, x = 44.5, y = 59.1, name = "Camp Taurajo" }, hearthCooldown = 0 })
+  assert(steps[1].kind == "turnin" and steps[1].q.id == 852, "hand in Hezrul Bloodmark first, got " .. steps[1].kind)
+end
 assert(chatErrors == 0, chatErrors .. " addon error(s) reported in chat")
 print("ok")

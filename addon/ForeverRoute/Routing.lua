@@ -9,7 +9,8 @@ local TRANSFER_YARDS = 2500 -- walk between two travel points (a flight master a
 local NEAREST = 4          -- travel points tried at each end of a trip
 local FLIGHT_OVERHEAD = 15 -- talking to the flight master and landing
 local HEARTH_CAST = 15     -- casting and loading
-local MIN_SAVING = 45      -- a ride or the hearthstone has to save at least this much over walking
+local MIN_SAVING = 45      -- a ride has to save at least this much over walking
+local HEARTH_SAVING = 300  -- the hearthstone is gone for an hour once used: only for trips it cuts by 5 minutes or more
 
 -- Travel points: { c, X, Y, map, x, y, name, kind ("fm" or the transport kind) }
 local function point(c, X, Y) return { c = c, X = X, Y = Y } end
@@ -162,7 +163,7 @@ function ns.NewRouter(opts)
     local t = plain(fw, tw)
     if hearthReady and hearthW then
       local h = HEARTH_CAST + plain(hearthW, tw)
-      if h + MIN_SAVING < t then return h, true end
+      if h + HEARTH_SAVING < t then return h, true end
     end
     if t == huge then t = 1800 end -- no known way: say half an hour
     return t, false
