@@ -152,6 +152,20 @@ fire("GOSSIP_SHOW"); flush()
 for _, s in ipairs(ns.steps) do if s.q and s.q.id == 6981 then first = s break end end
 print("after Sputtervalve:", plain(ns.StepText(first, true)))
 assert(first.kind == "turnin", "then hand it in to Falla Sagewind")
+-- Professions: Root Samples needs Herbalism, which a tailor/enchanter doesn't have.
+local skillLines = { { "Professions", true }, { "Tailoring", false, nil, 101 }, { "Enchanting", false, nil, 40 } }
+GetNumSkillLines = function() return #skillLines end
+GetSkillLineInfo = function(i) local l = skillLines[i]; return l[1], l[2], l[3], l[4] end
+log = {}
+mapNow, px, py = 1413, 0.624, 0.377
+fire("SKILL_LINES_CHANGED"); flush()
+local q866 = ns.Q[866]
+local function canTake(skills) return ns.available(q866, { done = {}, log = {}, level = 16, classBit = 128, raceBit = 16, skills = skills }, { skip = {} }) end
+assert(not canTake({ [197] = 101, [333] = 40 }), "Root Samples needs Herbalism")
+assert(canTake({ [182] = 50 }), "with Herbalism you can take it")
+assert(canTake(nil), "no skill list yet: don't hide it")
+table.insert(skillLines, { "Herbalism", false, nil, 50 })
+fire("SKILL_LINES_CHANGED"); flush()
 -- A flight: take off from a "Fly to" step, plan from where it lands, plan again on landing.
 local onTaxi = false
 UnitOnTaxi = function() return onTaxi end

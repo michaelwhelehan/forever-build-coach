@@ -212,6 +212,29 @@ mover:SetScript("OnUpdate", function(_, elapsed)
   if not ok then moverAcc = -60 end -- something's off with the position API: try again in a minute
 end)
 
+-- Your professions and secondary skills: { [skill id] = rank }, from the skill list (names, so English and German).
+local SKILL_IDS = {
+  Alchemy = 171, Blacksmithing = 164, Enchanting = 333, Engineering = 202, Herbalism = 182, Leatherworking = 165,
+  Mining = 186, Skinning = 393, Tailoring = 197, Fishing = 356, Cooking = 185, ["First Aid"] = 129,
+  ["Alchimie"] = 171, ["Schmiedekunst"] = 164, ["Verzauberkunst"] = 333, ["Ingenieurskunst"] = 202, ["Kräuterkunde"] = 182,
+  ["Lederverarbeitung"] = 165, ["Bergbau"] = 186, ["Kürschnerei"] = 393, ["Schneiderei"] = 197, ["Angeln"] = 356,
+  ["Kochkunst"] = 185, ["Erste Hilfe"] = 129,
+}
+local function readSkills()
+  if not (GetNumSkillLines and GetSkillLineInfo) then return nil end
+  local skills, seen = {}, 0
+  for i = 1, GetNumSkillLines() do
+    local name, header, _, rank = GetSkillLineInfo(i)
+    if not header then
+      seen = seen + 1
+      local id = name and SKILL_IDS[name]
+      if id then skills[id] = rank or 1 end
+    end
+  end
+  if seen == 0 then return nil end -- skill list not loaded yet: don't hide anything
+  return skills
+end
+
 -- The game's objective lines for a quest in your log: { { text, finished }, ... }
 function ns.objectives(questID)
   local out = {}
@@ -268,7 +291,7 @@ function ns.Replan(reason)
     level = level, xp = UnitXP("player"), xpMax = UnitXPMax("player"),
     classBit = bitOf(select(3, UnitClass("player"))), raceBit = bitOf(select(3, UnitRace("player"))),
     map = pos.map, x = pos.x, y = pos.y, done = done, log = log, opts = opts,
-    viaDone = ns.charDB().via, knownNodes = knownNodes(), hearth = hearthSpot(), hearthCooldown = hearthCooldown(),
+    skills = readSkills(), viaDone = ns.charDB().via, knownNodes = knownNodes(), hearth = hearthSpot(), hearthCooldown = hearthCooldown(),
   }
   local ok, steps, summary = pcall(ns.Plan, state)
   if not ok then
@@ -319,7 +342,7 @@ f:RegisterEvent("QUEST_LOG_UPDATE")
 f:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 -- Travel: flight paths you know, and where your hearthstone goes. Some clients lack an event: register what exists.
 for _, ev in ipairs({ "TAXIMAP_OPENED", "HEARTHSTONE_BOUND", "UNIT_SPELLCAST_SUCCEEDED", "GOSSIP_SHOW", "QUEST_GREETING", "QUEST_DETAIL",
-  "PLAYER_CONTROL_LOST", "PLAYER_CONTROL_GAINED" }) do pcall(f.RegisterEvent, f, ev) end
+  "PLAYER_CONTROL_LOST", "PLAYER_CONTROL_GAINED", "SKILL_LINES_CHANGED" }) do pcall(f.RegisterEvent, f, ev) end
 local logThrottle = 0
 f:SetScript("OnEvent", ns.guard("events", function(_, event, a1, ...)
   if event == "PLAYER_LOGIN" then

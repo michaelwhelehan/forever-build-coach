@@ -58,6 +58,7 @@ function ns.LoadQuests()
       om = tonumber(f[15]), ox = tonumber(f[16]), oy = tonumber(f[17]),
       xp = tonumber(f[18]) or 0, effort = tonumber(f[19]) or 0, flags = f[20] or "", kind = f[21] or "",
       giver = f[22] or "", ender = f[23] or "", exclTo = words(f[24]), via = f[25] or "",
+      skill = tonumber((f[26] or ""):match("^(%d+)")), skillMin = tonumber((f[26] or ""):match(":(%d+)")) or 1,
     }
     Q[id] = q
     if q.excl and q.excl > 0 then
@@ -124,6 +125,8 @@ local function available(q, sim, opts)
   if sim.done[q.id] or sim.log[q.id] or opts.skip[q.id] then return false end
   if q.kind == "i" then return false end -- starts from an item you loot
   if q.min > sim.level then return false end
+  -- Needs a profession you don't have (Root Samples: Herbalism). Without the game's skill list, assume you have it.
+  if q.skill and sim.skills and (sim.skills[q.skill] or 0) < q.skillMin then return false end
   if not hasBit(q.cls, sim.classBit) then return false end
   if q.races ~= 0 and q.races % 256 ~= 255 and not hasBit(q.races, sim.raceBit) then return false end
   if q.flags:find("[dr]") and not opts.dungeonQuests then return false end
@@ -182,6 +185,7 @@ function ns.Plan(state)
     classBit = state.classBit or 0, raceBit = state.raceBit or 0,
     map = state.map, x = state.x or 50, y = state.y or 50, time = 0,
     done = copySet(state.done or {}), log = {}, logCount = 0,
+    skills = state.skills,
   }
   for id, e in pairs(state.log or {}) do
     -- A quest with a stop on the way (flag v) isn't done until you've talked to them, whatever the game says.

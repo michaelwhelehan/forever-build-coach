@@ -275,6 +275,9 @@ for _, id in ipairs(sorted) do
   local flags = c and c[14] or ""
   if Q and Q[24] and Q[24] % 2 == 1 and not flags:find("p") then flags = flags .. "p" end
   local exclTo = Q and list(Q[16]) or ""
+  -- A profession it needs ("182:1" = Herbalism 1): the game only offers it if you have it.
+  local skill = (c and c[13] ~= "" and c[13]) or ""
+  if skill == "" and Q and type(Q[18]) == "table" and Q[18][1] then skill = Q[18][1] .. ":" .. (Q[18][2] or 1) end
   local starts = (f and f[5] ~= "" and f[5]) or (c and c[10]) or ""
   local ends = (f and f[6] ~= "" and f[6]) or (c and c[11]) or ""
   local pre = (c and c[7]) or (Q and list(Q[12])) or ""
@@ -367,10 +370,10 @@ for _, id in ipairs(sorted) do
   else
     kept = kept + 1
     local function xy(p) return p and string.format("%d|%.1f|%.1f", p[1], p[2], p[3]) or "0|0|0" end
-    rows[#rows + 1] = string.format('[%d]="%s|%d|%d|%.0f|%.0f|%s|%s|%d|%s|%s|%s|%d|%d|%s|%s|%s|%s|%s|%s"', id,
+    rows[#rows + 1] = string.format('[%d]="%s|%d|%d|%.0f|%.0f|%s|%s|%d|%s|%s|%s|%d|%d|%s|%s|%s|%s|%s|%s|%s"', id,
       clean(title), level, minLv, classes, races, pre, preAny, excl,
       xy(sp), xy(ep), xy(op), xp or 0, math.floor((effort or 0) + 0.5), flags, startKind,
-      clean(giver), clean(ender), exclTo, clean(via))
+      clean(giver), clean(ender), exclTo, clean(via), skill)
     if op then withObj = withObj + 1 elseif (effort or 0) > 0 and not flags:find("[dr]") then noObj = noObj + 1 end
   end
 end
@@ -428,7 +431,7 @@ if qdb then fh:write("-- Gaps filled from QuestieDB (https://github.com/Questie/
 fh:write("-- scripts/build-forever-route.lua makes it.\n")
 fh:write("-- q[quest] = \"title|level|min level|classes mask|races mask|needs all|needs one of|exclusive group|start map|x|y|\n")
 fh:write("--   end map|x|y|objective map|x|y|xp|effort seconds|flags (g group, d dungeon, r raid)|start kind (n/o/i)|giver|ender|\n")
-fh:write("--   quests you can't take once you've done one of these|who to talk to on the way (flag v)\"\n")
+fh:write("--   quests you can't take once you've done one of these|who to talk to on the way (flag v)|profession:skill it needs\"\n")
 fh:write("-- maps[uiMap] = {continent, world X at top, world Y at left, height, width (yards), name, side, lo, hi}\n")
 fh:write("local _, ns = ...\n")
 fh:write(string.format('ns.data = { built = "%s", quests = %d,\n', os.date("!%Y-%m-%d"), kept))
