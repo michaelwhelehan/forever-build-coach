@@ -139,6 +139,19 @@ fire("UNIT_SPELLCAST_SUCCEEDED", "player", "guid", 8690); flush()
 assert(ForeverRouteCharDB.hearth and ForeverRouteCharDB.hearth.map == 1458, "hearth remembered")
 mapNow, px, py = 1413, 0.517, 0.309
 fire("ZONE_CHANGED_NEW_AREA"); flush()
+-- The Glowing Shard: the game calls it complete once you hold the shard, but Sputtervalve in Ratchet comes first.
+log = { { id = 6981, complete = true } }
+mapNow, px, py = 1413, 0.615, 0.385 -- just outside Ratchet
+fire("QUEST_LOG_UPDATE"); fire("ZONE_CHANGED_NEW_AREA"); flush()
+local first
+for _, s in ipairs(ns.steps) do if s.q and s.q.id == 6981 then first = first or s end end
+print("glowing shard:", first and plain(ns.StepText(first, true)), #ns.steps, ns.log[6981], ns.summary.parked[1] and ns.summary.parked[1].title); show()
+assert(first and first.kind == "do" and first.map == 1413, "talk to Sputtervalve before handing in")
+UnitName = function() return "Sputtervalve" end
+fire("GOSSIP_SHOW"); flush()
+for _, s in ipairs(ns.steps) do if s.q and s.q.id == 6981 then first = s break end end
+print("after Sputtervalve:", plain(ns.StepText(first, true)))
+assert(first.kind == "turnin", "then hand it in to Falla Sagewind")
 SlashCmdList.FOREVERROUTE("options"); assert(ForeverRouteSettings, "settings window")
 for _, child in pairs(ForeverRouteSettings) do end
 ForeverRouteMinimapButton._scripts.OnEnter(ForeverRouteMinimapButton)

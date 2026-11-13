@@ -73,6 +73,12 @@ local function centre(list)
   return bp
 end
 
+-- Quests with a stop the game doesn't count as an objective: it calls them complete while you still have to talk to
+-- someone first. The stop becomes the quest's objective spot, and the addon waits until you've been there.
+local VIA = {
+  [6981] = 3442, -- The Glowing Shard: Sputtervalve in Ratchet, then Falla Sagewind
+}
+
 local npcNames = ns.qfNpcNames or {}
 local function npcSpots(id)
   local t = {}
@@ -313,6 +319,11 @@ for _, id in ipairs(sorted) do
     end
   end
   local op = centre(olist)
+  local via = ""
+  if VIA[id] then
+    local vp = centre(npcSpots(VIA[id]))
+    if vp then op, via, flags = vp, npcNames[VIA[id]] or whoName("n" .. VIA[id]), flags .. "v"; effort = math.max(effort or 0, 20) end
+  end
 
   local xp = ns.qxp and ns.qxp.q and ns.qxp.q[id]
   if not xp and level > 0 and ns.qxp and ns.qxp.curve then
@@ -336,10 +347,10 @@ for _, id in ipairs(sorted) do
   else
     kept = kept + 1
     local function xy(p) return p and string.format("%d|%.1f|%.1f", p[1], p[2], p[3]) or "0|0|0" end
-    rows[#rows + 1] = string.format('[%d]="%s|%d|%d|%.0f|%.0f|%s|%s|%d|%s|%s|%s|%d|%d|%s|%s|%s|%s|%s"', id,
+    rows[#rows + 1] = string.format('[%d]="%s|%d|%d|%.0f|%.0f|%s|%s|%d|%s|%s|%s|%d|%d|%s|%s|%s|%s|%s|%s"', id,
       clean(title), level, minLv, classes, races, pre, preAny, excl,
       xy(sp), xy(ep), xy(op), xp or 0, math.floor((effort or 0) + 0.5), flags, startKind,
-      clean(giver), clean(ender), exclTo)
+      clean(giver), clean(ender), exclTo, clean(via))
     if op then withObj = withObj + 1 elseif (effort or 0) > 0 and not flags:find("[dr]") then noObj = noObj + 1 end
   end
 end
@@ -397,7 +408,7 @@ if qdb then fh:write("-- Gaps filled from QuestieDB (https://github.com/Questie/
 fh:write("-- scripts/build-forever-route.lua makes it.\n")
 fh:write("-- q[quest] = \"title|level|min level|classes mask|races mask|needs all|needs one of|exclusive group|start map|x|y|\n")
 fh:write("--   end map|x|y|objective map|x|y|xp|effort seconds|flags (g group, d dungeon, r raid)|start kind (n/o/i)|giver|ender|\n")
-fh:write("--   quests you can't take once you've done one of these\"\n")
+fh:write("--   quests you can't take once you've done one of these|who to talk to on the way (flag v)\"\n")
 fh:write("-- maps[uiMap] = {continent, world X at top, world Y at left, height, width (yards), name, side, lo, hi}\n")
 fh:write("local _, ns = ...\n")
 fh:write(string.format('ns.data = { built = "%s", quests = %d,\n', os.date("!%Y-%m-%d"), kept))

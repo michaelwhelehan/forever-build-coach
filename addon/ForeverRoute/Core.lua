@@ -158,6 +158,24 @@ local function hearthCooldown()
   return 0
 end
 
+-- Stops on the way (flag v): done once you've talked to that NPC, or stood next to the spot.
+function ns.viaReached(id)
+  local db = ns.charDB()
+  if db.via[id] then return end
+  db.via[id] = true
+  local q = ns.Q and ns.Q[id]
+  if q then msg("talked to " .. q.via .. ": now take " .. q.title .. " to " .. q.ender .. ".") end
+  ns.RequestReplan("via")
+end
+local function checkViaTalk()
+  local name = UnitName and UnitName("npc")
+  if not name or not ns.Q or not ns.log then return end
+  for id in pairs(ns.log) do
+    local q = ns.Q[id]
+    if q and q.via ~= "" and q.via == name then ns.viaReached(id) end
+  end
+end
+
 -- The game's objective lines for a quest in your log: { { text, finished }, ... }
 function ns.objectives(questID)
   local out = {}
@@ -185,6 +203,7 @@ function ns.charDB()
   ForeverRouteCharDB = ForeverRouteCharDB or {}
   ForeverRouteCharDB.skip = ForeverRouteCharDB.skip or {}
   ForeverRouteCharDB.taxi = ForeverRouteCharDB.taxi or {}
+  ForeverRouteCharDB.via = ForeverRouteCharDB.via or {}
   return ForeverRouteCharDB
 end
 function ns.skipList()
@@ -209,7 +228,7 @@ function ns.Replan(reason)
     level = level, xp = UnitXP("player"), xpMax = UnitXPMax("player"),
     classBit = bitOf(select(3, UnitClass("player"))), raceBit = bitOf(select(3, UnitRace("player"))),
     map = pos.map, x = pos.x, y = pos.y, done = done, log = log, opts = opts,
-    knownNodes = knownNodes(), hearth = hearthSpot(), hearthCooldown = hearthCooldown(),
+    viaDone = ns.charDB().via, knownNodes = knownNodes(), hearth = hearthSpot(), hearthCooldown = hearthCooldown(),
   }
   local ok, steps, summary = pcall(ns.Plan, state)
   if not ok then
@@ -259,7 +278,7 @@ f:RegisterEvent("QUEST_REMOVED")
 f:RegisterEvent("QUEST_LOG_UPDATE")
 f:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 -- Travel: flight paths you know, and where your hearthstone goes. Some clients lack an event: register what exists.
-for _, ev in ipairs({ "TAXIMAP_OPENED", "HEARTHSTONE_BOUND", "UNIT_SPELLCAST_SUCCEEDED" }) do pcall(f.RegisterEvent, f, ev) end
+for _, ev in ipairs({ "TAXIMAP_OPENED", "HEARTHSTONE_BOUND", "UNIT_SPELLCAST_SUCCEEDED", "GOSSIP_SHOW", "QUEST_GREETING", "QUEST_DETAIL" }) do pcall(f.RegisterEvent, f, ev) end
 local logThrottle = 0
 f:SetScript("OnEvent", ns.guard("events", function(_, event, a1, ...)
   if event == "PLAYER_LOGIN" then
@@ -277,6 +296,8 @@ f:SetScript("OnEvent", ns.guard("events", function(_, event, a1, ...)
     local n = learnTaxi()
     if first and n > 0 then msg(string.format("learned your %d flight paths; the route uses them now.", n)) end
     ns.RequestReplan(event)
+  elseif event == "GOSSIP_SHOW" or event == "QUEST_GREETING" or event == "QUEST_DETAIL" then
+    checkViaTalk()
   elseif event == "HEARTHSTONE_BOUND" then
     rememberHearth(); ns.RequestReplan(event)
   elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
@@ -286,6 +307,7 @@ f:SetScript("OnEvent", ns.guard("events", function(_, event, a1, ...)
     end
   elseif event == "QUEST_TURNED_IN" then
     if a1 then completed[a1] = true end
+    if a1 then ns.charDB().via[a1] = nil end
     ns.RequestReplan(event)
   elseif event == "QUEST_LOG_UPDATE" then
     -- Fires often; objectives finishing matter, so check at most every 2 seconds.

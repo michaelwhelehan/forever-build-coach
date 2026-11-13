@@ -57,7 +57,7 @@ function ns.LoadQuests()
       em = tonumber(f[12]), ex = tonumber(f[13]), ey = tonumber(f[14]),
       om = tonumber(f[15]), ox = tonumber(f[16]), oy = tonumber(f[17]),
       xp = tonumber(f[18]) or 0, effort = tonumber(f[19]) or 0, flags = f[20] or "", kind = f[21] or "",
-      giver = f[22] or "", ender = f[23] or "", exclTo = words(f[24]),
+      giver = f[22] or "", ender = f[23] or "", exclTo = words(f[24]), via = f[25] or "",
     }
     Q[id] = q
     if q.excl and q.excl > 0 then
@@ -184,7 +184,9 @@ function ns.Plan(state)
     done = copySet(state.done or {}), log = {}, logCount = 0,
   }
   for id, e in pairs(state.log or {}) do
-    if Q[id] then sim.log[id] = { complete = e.complete }; sim.logCount = sim.logCount + 1 end
+    -- A quest with a stop on the way (flag v) isn't done until you've talked to them, whatever the game says.
+    local viaLeft = Q[id] and Q[id].flags:find("v") and not (state.viaDone or {})[id]
+    if Q[id] then sim.log[id] = { complete = e.complete and not viaLeft }; sim.logCount = sim.logCount + 1 end
   end
 
   local steps, startLevel, startXp, grinds, travels = {}, sim.level, sim.xp, 0, 0
