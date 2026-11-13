@@ -70,11 +70,19 @@ UnitXPMax = function() return 25200 end
 UnitClass = function() return "Mage", "MAGE", 8 end
 UnitRace = function() return "Undead", "Scourge", 5 end
 GetPlayerFacing = function() return 1.0 end
+local bind = "Undercity"
+GetBindLocation = function() return bind end
+GetItemCount = function() return 1 end
+GetItemCooldown = function() return 0, 0 end
+GetTaxiMapID = function() return 1414 end
+C_TaxiMap = { GetAllTaxiNodes = function() return { { nodeID = 25, state = 0 }, { nodeID = 11, state = 1 }, { nodeID = 23, state = 1 }, { nodeID = 13, state = 2 } } end }
+local mapNow = 1413
+C_Map.GetBestMapForUnit = function() return mapNow end
 GetTime = function() return os.clock() * 1000 end
 SlashCmdList = {}
 
 local ns = {}
-for _, f in ipairs({ dataFile, "addon/ForeverRoute/Planner.lua", "addon/ForeverRoute/Core.lua", "addon/ForeverRoute/UI.lua", "addon/ForeverRoute/Settings.lua" }) do
+for _, f in ipairs({ dataFile, "addon/ForeverRoute/Routing.lua", "addon/ForeverRoute/Planner.lua", "addon/ForeverRoute/Core.lua", "addon/ForeverRoute/UI.lua", "addon/ForeverRoute/Settings.lua" }) do
   assert(loadfile(f))("ForeverRoute", ns)
 end
 local function fire(ev, ...) for _, fr in ipairs(frames) do local fn = fr._scripts.OnEvent if fn then fn(fr, ev, ...) end end end
@@ -117,6 +125,20 @@ for i, r in ipairs(ForeverRouteFrame.rows) do if r._shown and (rawget(r.text, "_
 print("height", ForeverRouteFrame:GetHeight())
 ns.opts().collapsed = true; ns.UpdateUI(); print("collapsed height", ForeverRouteFrame:GetHeight()); ns.opts().collapsed = false
 ns.Toast("Level 24: test"); flush()
+-- Travel: learn flight paths at a flight master, then stand in Undercity with Barrens quests in the log.
+fire("TAXIMAP_OPENED"); flush()
+assert(ForeverRouteCharDB.taxi[25] and ForeverRouteCharDB.taxi[23] and not ForeverRouteCharDB.taxi[13], "flight paths learned")
+mapNow, px, py = 1458, 0.66, 0.44
+fire("ZONE_CHANGED_NEW_AREA"); flush()
+print("in Undercity:"); show()
+local rides = 0
+for _, s in ipairs(ns.steps) do if s.kind == "ride" then rides = rides + 1; print("  ride:", plain(ns.StepText(s, true))) end end
+ns.UpdateUI(); print("plan:", plain(ForeverRouteFrame.plan._text))
+ForeverRouteArrow._scripts.OnUpdate(ForeverRouteArrow, 1)
+fire("UNIT_SPELLCAST_SUCCEEDED", "player", "guid", 8690); flush()
+assert(ForeverRouteCharDB.hearth and ForeverRouteCharDB.hearth.map == 1458, "hearth remembered")
+mapNow, px, py = 1413, 0.517, 0.309
+fire("ZONE_CHANGED_NEW_AREA"); flush()
 SlashCmdList.FOREVERROUTE("options"); assert(ForeverRouteSettings, "settings window")
 for _, child in pairs(ForeverRouteSettings) do end
 ForeverRouteMinimapButton._scripts.OnEnter(ForeverRouteMinimapButton)

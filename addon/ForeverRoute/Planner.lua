@@ -17,6 +17,9 @@ local MAX_LEVEL = 60
 local LOG_SIZE = 20
 local HUB_YARDS = 45 -- stops this close together count as one place
 local NEAR_YARDS = 1600 -- quests to pick up without counting a zone change
+local LOCAL_SECONDS = 150 -- closer than this (travel time) counts as where you are
+local ZONE_SWITCH = 1.15 -- another zone has to be this much better per second to leave
+local HEARTH_COOLDOWN = 3600
 
 -- ForeverDB's quest XP reduction for a quest d levels below you: d<=5 100%, 6 80%, 7 60%, 8 40%, 9 20%, 10+ 10%.
 local function xpRatio(playerLevel, questLevel)
@@ -198,9 +201,53 @@ function ns.Plan(state)
     step.levelPct = floor(sim.xp / math.max(1, xpToLevel(sim)) * 100)
     steps[#steps + 1] = step
   end
+  -- Travel: the router knows your flight paths, the zeppelins, boats and lifts, and your hearthstone.
+  local router = state.router or ns.NewRouter({ run = pace(sim.level).r or 7, known = state.knownNodes, hearth = state.hearth,
+    flights = opts.flights, hearthstone = opts.hearthstone })
+  sim.hearthAt = state.hearthCooldown or huge -- seconds until it's ready; nil when you have no hearthstone
+  local function hearthReady() return opts.hearthstone ~= false and state.hearth ~= nil and sim.time >= sim.hearthAt end
+  local function here() return { map = sim.map, x = sim.x, y = sim.y } end
+  local function spot(m, x, y) return { map = m, x = x, y = y } end
+  local function travelTime(m, x, y)
+    if not sim.map or not m or m == 0 then return 120, false end
+    if m == sim.map and yards(sim.map, sim.x, sim.y, m, x, y) <= HUB_YARDS then return 0, false end
+    return router:time(here(), spot(m, x, y), hearthReady())
+  end
+  -- Time between two spots of a quest (its start, objectives and end), without the hearthstone.
+  local legCache = {}
+  local function between(m1, x1, y1, m2, x2, y2)
+    if not m1 or not m2 or m1 == 0 or m2 == 0 then return 60 end
+    local key = m1 .. ":" .. x1 .. ":" .. y1 .. ">" .. m2 .. ":" .. x2 .. ":" .. y2
+    local t = legCache[key]
+    if not t then t = router:time(spot(m1, x1, y1), spot(m2, x2, y2), false); legCache[key] = t end
+    return t
+  end
+  -- Goes there, with a step for each ride on the way (a flight, a zeppelin or boat, your hearthstone).
   local function go(m, x, y)
-    sim.time = sim.time + yards(sim.map, sim.x, sim.y, m, x, y) / (pace(sim.level).r or 7)
+    if not m or m == 0 then return end
+    local t, hearth = travelTime(m, x, y)
+    if t > 60 and sim.map then
+      for _, leg in ipairs(router:route(here(), spot(m, x, y), hearthReady())) do
+        add({ kind = "ride", mode = leg.mode, name = leg.name, fromName = leg.fromName, toName = leg.toName, toMap = leg.toMap,
+          toX = leg.toX, toY = leg.toY, map = leg.map, x = leg.x, y = leg.y })
+      end
+    end
+    if hearth then sim.hearthAt = sim.time + HEARTH_COOLDOWN end
+    sim.time = sim.time + t
     sim.map, sim.x, sim.y = m, x, y
+  end
+
+  -- XP per second of an action: the quest's XP (and the mobs on the way) over the time to get there and finish it.
+  local function questXp(q)
+    return q.xp * xpRatio(sim.level, q.lv) + (q.effort / (pace(sim.level).c or 30)) * killXp(sim.level) * 0.6
+  end
+  local function rateOf(kind, q, t)
+    if kind == "turnin" then return q.xp * xpRatio(sim.level, q.lv) / (t + 5) end
+    local om, ox, oy = objectiveSpot(q)
+    local toEnd = om and between(om, ox, oy, q.em, q.ex, q.ey) or 0
+    if kind == "do" then return questXp(q) / (t + q.effort + toEnd + 5) end
+    local toObj = om and between(q.sm, q.sx, q.sy, om, ox, oy) or between(q.sm, q.sx, q.sy, q.em, q.ex, q.ey)
+    return questXp(q) / (t + 5 + toObj + q.effort + toEnd + 5)
   end
 
   -- Quests in the log that went grey or give too little XP now: suggest abandoning them (once each).
@@ -216,35 +263,47 @@ function ns.Plan(state)
     end
   end
 
-  -- The best zone to go to next: XP of the worthwhile quests you can start there, less a cost for getting there.
+
+  -- The best other zone to go to: XP of its worthwhile quests (new ones, and ones in your log that end or have objectives
+  -- there) per second, counting the trip there. Returns the map, its busiest quest giver spot, the quest count and the rate.
   local function bestZone()
     local byMap = {}
+    local function entry(m)
+      local z = byMap[m] or { xp = 0, n = 0, t = 0, quests = {} }
+      byMap[m] = z
+      return z
+    end
     for _, q in pairs(Q) do
       if q.sm and q.sm > 0 and available(q, sim, opts) and worth(q, sim.level, opts) then
-        local z = byMap[q.sm] or { xp = 0, n = 0, quests = {} }
-        z.xp = z.xp + q.xp * xpRatio(sim.level, q.lv)
-        z.n = z.n + 1
+        local z = entry(q.sm)
+        z.xp, z.n, z.t = z.xp + questXp(q), z.n + 1, z.t + q.effort + 60
         z.quests[#z.quests + 1] = q
-        byMap[q.sm] = z
       end
     end
-    local best, bestScore
+    for id, e in pairs(sim.log) do
+      local q = Q[id]
+      local m = e.complete and q.em or (objectiveSpot(q))
+      if m and byMap[m] and not opts.skip[id] then
+        local z = byMap[m]
+        z.xp, z.t = z.xp + q.xp * xpRatio(sim.level, q.lv), z.t + (e.complete and 10 or q.effort + 30)
+      end
+    end
+    local best, bestRate, bx, by
     for m, z in pairs(byMap) do
-      local d = yards(sim.map, sim.x, sim.y, m, z.quests[1].sx, z.quests[1].sy)
-      local score = z.xp / (1 + d / 3000)
-      if z.n >= 2 or z.xp > 0 then
-        if not bestScore or score > bestScore then best, bestScore = m, score end
+      if z.n >= 2 then
+        local t = travelTime(m, z.quests[1].sx, z.quests[1].sy)
+        local rate = z.xp / (t + z.t)
+        if not bestRate or rate > bestRate then best, bestRate = m, rate end
       end
     end
     if not best then return nil end
-    -- Its busiest quest giver spot.
     local qs, hub, hubN = byMap[best].quests, nil, -1
     for _, a in ipairs(qs) do
       local n = 0
       for _, b in ipairs(qs) do if yards(best, a.sx, a.sy, best, b.sx, b.sy) <= HUB_YARDS * 3 then n = n + 1 end end
       if n > hubN then hub, hubN = a, n end
     end
-    return best, hub.sx, hub.sy, hubN
+    return best, hub.sx, hub.sy, hubN, bestRate
   end
 
   local guard = 0
@@ -252,15 +311,14 @@ function ns.Plan(state)
     guard = guard + 1
     abandonStale()
 
-    -- Every action you could take next, and how far away it is.
-    local best, bestCost
+    -- Every action you could take next and how long it takes to get there (walking, flights, zeppelins).
+    local best, bestCost, bestT
     local function consider(kind, q, m, x, y, bias)
       if not m or m == 0 then return end
-      local d = yards(sim.map, sim.x, sim.y, m, x, y)
-      if d <= HUB_YARDS then d = 0 end
-      local cost = d * (bias or 1)
+      local t = travelTime(m, x, y)
+      local cost = t * (bias or 1)
       if not bestCost or cost < bestCost or (cost == bestCost and q.id < best.q.id) then
-        best, bestCost = { kind = kind, q = q, map = m, x = x, y = y }, cost
+        best, bestCost, bestT = { kind = kind, q = q, map = m, x = x, y = y }, cost, t
       end
     end
     local pending = 0
@@ -289,13 +347,20 @@ function ns.Plan(state)
       end
     end
 
-    if best and bestCost > NEAR_YARDS * 2 and sim.logCount < LOG_SIZE then
-      -- Everything left is far away: is another zone better than walking back?
-      local m, x, y = bestZone()
-      if m and m ~= best.map and yards(sim.map, sim.x, sim.y, m, x, y) < bestCost then best = nil end
+    -- When the nearest thing left is far away (a quest in your log across the world), is a zone worth more per second?
+    -- Then the far quest waits until the route passes by.
+    local zm, zx, zy, zn, zRate
+    if (not best or bestT > LOCAL_SECONDS) and sim.logCount < LOG_SIZE then
+      zm, zx, zy, zn, zRate = bestZone()
+      if zm and best and (zm == best.map or zRate < rateOf(best.kind, best.q, bestT) * ZONE_SWITCH) then zm = nil end
     end
 
-    if best then
+    if zm and travels < 6 then
+      travels = travels + 1
+      local fromMap = sim.map
+      go(zm, zx, zy)
+      add({ kind = "travel", map = zm, x = zx, y = zy, count = zn, fromMap = fromMap })
+    elseif best then
       local q = best.q
       go(best.map, best.x, best.y)
       if best.kind == "accept" then
@@ -317,26 +382,26 @@ function ns.Plan(state)
         gain(best.xp)
       end
       add(best)
+    elseif grinds < 1 and sim.level < MAX_LEVEL then
+      grinds = grinds + 1
+      add({ kind = "grind", toLevel = sim.level + 1 })
+      sim.level, sim.xp = sim.level + 1, 0
     else
-      local m, x, y, n = bestZone()
-      if m and travels < 6 then
-        travels = travels + 1
-        local fromMap = sim.map
-        go(m, x, y)
-        add({ kind = "travel", map = m, x = x, y = y, count = n, fromMap = fromMap })
-      elseif grinds < 1 and sim.level < MAX_LEVEL then
-        grinds = grinds + 1
-        add({ kind = "grind", toLevel = sim.level + 1 })
-        sim.level, sim.xp = sim.level + 1, 0
-      else
-        break
-      end
+      break
     end
   end
 
+  -- Quests in your log the route doesn't reach yet: parked until you're nearby.
+  local inPlan, parked = {}, {}
+  for _, s in ipairs(steps) do if s.q then inPlan[s.q.id] = true end end
+  for id in pairs(state.log or {}) do
+    if Q[id] and not inPlan[id] and not opts.skip[id] then parked[#parked + 1] = Q[id] end
+  end
+  table.sort(parked, function(a, b) return a.title < b.title end)
+
   local summary = {
     fromLevel = startLevel, toLevel = sim.level, xp = sim.xp, minutes = floor(sim.time / 60 + 0.5),
-    startXp = startXp,
+    startXp = startXp, parked = parked,
   }
   return steps, summary
 end

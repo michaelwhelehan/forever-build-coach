@@ -1,6 +1,6 @@
 -- Builds addon/ForeverRoute/Data.lua from ForeverDB.net's published addon data files.
 -- Usage: lua5.1 scripts/build-forever-route.lua <folder with ForeverDB's Data/*.lua> <output Data.lua> [QuestieDB checkout]
--- The folder needs QuestClassic, QuestForever, QuestXP, Zones and RouteMaps (scripts/fetch-foreverdb-data.sh gets them).
+-- The folder needs QuestClassic, QuestForever, QuestXP, Zones, RouteMaps and Travel (scripts/fetch-foreverdb-data.sh gets them).
 -- ForeverDB's data is GPL-3.0 with a credit term (section 7(b)): "Data from ForeverDB.net". Data.lua carries it, and
 -- is not committed: the Forever Route workflow builds it into the release zip.
 
@@ -17,6 +17,7 @@ local function load(name)
   chunk("ForeverDB", ns)
 end
 for _, n in ipairs({ "QuestClassic", "QuestForever", "QuestXP", "Zones", "RouteMaps" }) do load(n) end
+if io.open(src .. "/Travel.lua") then load("Travel") end
 
 local function split(s, sep)
   local t = {}
@@ -357,6 +358,38 @@ for band, p in pairs(ns.pace or {}) do
 end
 table.sort(paceRows)
 
+-- Travel: Horde and neutral flight masters, flight times (players' measured times when there are some, otherwise the
+-- path length at flying speed), and the zeppelins, boats and lifts Horde can use.
+local travelOut = ""
+local td = ns.travelData
+if td then
+  local nodeRows, flightRows, linkRows, keep = {}, {}, {}, {}
+  for id, n in pairs(td.nodes or {}) do
+    if n[7] == "h" or n[7] == "n" then
+      keep[id] = true
+      nodeRows[#nodeRows + 1] = string.format('[%d]={%d,%d,%d,%d,%.1f,%.1f,"%s"}', id, n[1], n[2], n[3], n[4] or 0, n[5] or 0, n[6] or 0, clean(n[9] or ""))
+    end
+  end
+  table.sort(nodeRows)
+  local measured = {}
+  for a, b, sec, n in (td.measured or ""):gmatch("(%d+)>(%d+)>(%d+)>(%d+)") do measured[a .. ">" .. b] = tonumber(sec) end
+  local fly = (td.speeds and td.speeds.fly) or 32
+  for a, b, yd in (td.flights or ""):gmatch("(%d+)>(%d+)>(%d+)>%d+") do
+    if keep[tonumber(a)] and keep[tonumber(b)] then
+      flightRows[#flightRows + 1] = a .. ">" .. b .. ">" .. (measured[a .. ">" .. b] or math.floor(tonumber(yd) / fly + 0.5))
+    end
+  end
+  for _, l in ipairs(ns.routeLinks or {}) do
+    if l.side == "" or l.side == "H" then
+      linkRows[#linkRows + 1] = string.format('{%d,%d,%d,%d,%d,%d,%d,"%s","%s"}', l.a.c, l.a.x, l.a.y, l.b.c, l.b.x, l.b.y,
+        math.floor((l.wait or 0) / 2 + (l.ride or 0) + 0.5), l.kind, clean(l.name))
+    end
+  end
+  travelOut = "travel = {\nnodes = {" .. table.concat(nodeRows, ",") .. "},\nflights = \"" .. table.concat(flightRows, " ")
+    .. "\",\nlinks = {" .. table.concat(linkRows, ",\n") .. "},\n},\n"
+  io.stderr:write(string.format("travel: %d flight masters, %d flights, %d transports\n", #nodeRows, #flightRows, #linkRows))
+end
+
 local fh = assert(io.open(out, "w"))
 fh:write("-- Data from ForeverDB.net (https://foreverdb.net), built ", os.date("!%Y-%m-%d"), " from ForeverDB's addon data.\n")
 fh:write("-- GPL-3.0 (CMaNGOS classic-db and ForeverDB). Reuse requires this credit: \"Data from ForeverDB.net\". Do not edit:\n")
@@ -371,6 +404,7 @@ fh:write(string.format('ns.data = { built = "%s", quests = %d,\n', os.date("!%Y-
 fh:write("q = {\n", table.concat(rows, ",\n"), "\n},\n")
 fh:write("maps = {\n", table.concat(mapRows, ",\n"), "\n},\n")
 fh:write("pace = {", table.concat(paceRows, ","), "},\n")
+fh:write(travelOut)
 fh:write("}\n")
 fh:close()
 

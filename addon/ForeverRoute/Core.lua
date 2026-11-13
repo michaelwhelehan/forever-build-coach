@@ -8,6 +8,7 @@ _G.ForeverRoute = ns
 local DEFAULT_OPTS = {
   minXpPct = 60, maxAbove = 3, steps = 40, dungeonQuests = false, groupQuests = false, arrow = true, mapPin = true,
   rows = 6, scale = 1, alpha = 0.92, locked = false, minimap = true, minimapAngle = 215, collapsed = false,
+  flights = true, hearthstone = true,
 }
 
 ns.steps, ns.summary = {}, nil
@@ -94,6 +95,69 @@ local function position()
 end
 ns.position = position
 
+-- Flight paths you know, read from the flight map whenever you open it (saved per character).
+local function learnTaxi()
+  local db = ns.charDB()
+  local nodes = ns.data and ns.data.travel and ns.data.travel.nodes or {}
+  local found = 0
+  if C_TaxiMap and C_TaxiMap.GetAllTaxiNodes then
+    local map = (GetTaxiMapID and GetTaxiMapID()) or (C_Map and C_Map.GetBestMapForUnit and C_Map.GetBestMapForUnit("player"))
+    for _, n in ipairs(map and C_TaxiMap.GetAllTaxiNodes(map) or {}) do
+      -- state 2 is a flight path you haven't found yet
+      if n.nodeID and nodes[n.nodeID] and n.state ~= 2 then db.taxi[n.nodeID] = true; found = found + 1 end
+    end
+  end
+  if found == 0 and NumTaxiNodes and TaxiNodeName then
+    for i = 1, NumTaxiNodes() do
+      local kind = TaxiNodeGetType and TaxiNodeGetType(i)
+      if kind == "CURRENT" or kind == "REACHABLE" then
+        local name = (TaxiNodeName(i) or ""):match("^([^,]+)")
+        for id, n in pairs(nodes) do if n[7] == name then db.taxi[id] = true; found = found + 1 end end
+      end
+    end
+  end
+  if found > 0 then db.taxiLearned = true end
+  return found
+end
+ns.learnTaxi = learnTaxi
+
+local function knownNodes()
+  local db = ns.charDB()
+  local known = {}
+  for id in pairs(db.taxi) do known[id] = true end
+  local home = ns.HOME_NODES and ns.HOME_NODES[select(3, UnitRace("player")) or 0]
+  if home then known[home] = true end
+  return known
+end
+
+-- Where your hearthstone takes you. Learned exactly when you bind at an inn or use the hearthstone; until then a flight
+-- master with the inn's name stands in.
+local HEARTHSTONE = 6948
+local function bindName() return GetBindLocation and GetBindLocation() or nil end
+local function hearthSpot()
+  local db, name = ns.charDB(), bindName()
+  if not name then return nil end
+  if db.hearth and db.hearth.name == name then return db.hearth end
+  local plainName = name:gsub("^The ", "")
+  for _, n in pairs(ns.data and ns.data.travel and ns.data.travel.nodes or {}) do
+    if n[7] == name or n[7] == plainName then return { map = n[4], x = n[5], y = n[6], name = name } end
+  end
+  return nil
+end
+local function rememberHearth()
+  local name, p = bindName(), position()
+  if name and p.map then ns.charDB().hearth = { map = p.map, x = p.x, y = p.y, name = name } end
+end
+ns.rememberHearth = rememberHearth
+local function hearthCooldown()
+  if GetItemCount and GetItemCount(HEARTHSTONE) == 0 then return nil end
+  local getCd = GetItemCooldown or (C_Container and C_Container.GetItemCooldown)
+  if not getCd then return 0 end
+  local start, duration = getCd(HEARTHSTONE)
+  if start and start > 0 and duration and duration > 1.5 then return math.max(0, start + duration - GetTime()) end
+  return 0
+end
+
 -- The game's objective lines for a quest in your log: { { text, finished }, ... }
 function ns.objectives(questID)
   local out = {}
@@ -117,6 +181,12 @@ function ns.opts()
   for k, v in pairs(DEFAULT_OPTS) do if ForeverRouteDB.opts[k] == nil then ForeverRouteDB.opts[k] = v end end
   return ForeverRouteDB.opts
 end
+function ns.charDB()
+  ForeverRouteCharDB = ForeverRouteCharDB or {}
+  ForeverRouteCharDB.skip = ForeverRouteCharDB.skip or {}
+  ForeverRouteCharDB.taxi = ForeverRouteCharDB.taxi or {}
+  return ForeverRouteCharDB
+end
 function ns.skipList()
   ForeverRouteCharDB = ForeverRouteCharDB or {}
   ForeverRouteCharDB.skip = ForeverRouteCharDB.skip or {}
@@ -139,6 +209,7 @@ function ns.Replan(reason)
     level = level, xp = UnitXP("player"), xpMax = UnitXPMax("player"),
     classBit = bitOf(select(3, UnitClass("player"))), raceBit = bitOf(select(3, UnitRace("player"))),
     map = pos.map, x = pos.x, y = pos.y, done = done, log = log, opts = opts,
+    knownNodes = knownNodes(), hearth = hearthSpot(), hearthCooldown = hearthCooldown(),
   }
   local ok, steps, summary = pcall(ns.Plan, state)
   if not ok then
@@ -187,8 +258,10 @@ f:RegisterEvent("QUEST_TURNED_IN")
 f:RegisterEvent("QUEST_REMOVED")
 f:RegisterEvent("QUEST_LOG_UPDATE")
 f:RegisterEvent("ZONE_CHANGED_NEW_AREA")
+-- Travel: flight paths you know, and where your hearthstone goes. Some clients lack an event: register what exists.
+for _, ev in ipairs({ "TAXIMAP_OPENED", "HEARTHSTONE_BOUND", "UNIT_SPELLCAST_SUCCEEDED" }) do pcall(f.RegisterEvent, f, ev) end
 local logThrottle = 0
-f:SetScript("OnEvent", ns.guard("events", function(_, event, a1)
+f:SetScript("OnEvent", ns.guard("events", function(_, event, a1, ...)
   if event == "PLAYER_LOGIN" then
     ns.opts(); ns.skipList()
     if not ns.data then
@@ -198,6 +271,19 @@ f:SetScript("OnEvent", ns.guard("events", function(_, event, a1)
     loadCompleted()
     if ns.CreateUI then ns.CreateUI() end
     msg(string.format("%d Horde quests from ForeverDB.net (built %s). Type /fr to show or hide the route.", ns.data.quests or 0, ns.data.built or "?"))
+  elseif event == "TAXIMAP_OPENED" then
+    local db = ns.charDB()
+    local first = not db.taxiLearned
+    local n = learnTaxi()
+    if first and n > 0 then msg(string.format("learned your %d flight paths; the route uses them now.", n)) end
+    ns.RequestReplan(event)
+  elseif event == "HEARTHSTONE_BOUND" then
+    rememberHearth(); ns.RequestReplan(event)
+  elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
+    -- Hearthstone used: where you land is where it goes.
+    if a1 == "player" and select(2, ...) == 8690 then
+      C_Timer.After(5, function() rememberHearth(); ns.RequestReplan("hearth") end)
+    end
   elseif event == "QUEST_TURNED_IN" then
     if a1 then completed[a1] = true end
     ns.RequestReplan(event)

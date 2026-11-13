@@ -18,6 +18,18 @@ local KIND = {
   abandon = { label = "Abandon", icon = "Interface\\Buttons\\UI-GroupLoot-Pass-Up",   color = { 1, 0.35, 0.35 } },
   grind   = { label = "Grind",   icon = "Interface\\Icons\\Ability_Warrior_BattleShout", color = { 0.75, 0.55, 1 } },
 }
+-- Rides on the way: one look per kind.
+local RIDE = {
+  fly      = { label = "Fly",   icon = "Interface\\Icons\\Ability_Mount_Wyvern_01", color = { 0.4, 0.85, 1 } },
+  hearth   = { label = "Hearth", icon = "Interface\\Icons\\INV_Misc_Rune_01",       color = { 0.4, 0.85, 1 } },
+  zeppelin = { label = "Zeppelin", icon = "Interface\\Icons\\INV_Misc_Map_01",      color = { 0.4, 0.85, 1 } },
+  boat     = { label = "Boat",  icon = "Interface\\Icons\\INV_Misc_Map_01",          color = { 0.4, 0.85, 1 } },
+  lift     = { label = "Lift",  icon = "Interface\\Icons\\INV_Misc_Map_01",          color = { 0.4, 0.85, 1 } },
+}
+local function kindOf(s)
+  if s and s.kind == "ride" then return RIDE[s.mode] or RIDE.boat end
+  return s and KIND[s.kind] or KIND.grind
+end
 local DONE_ICON = "Interface\\RaidFrame\\ReadyCheck-Ready"
 local ARROW_TEX = "Interface\\Minimap\\MinimapArrow"
 
@@ -50,6 +62,11 @@ end
 local function stepTitle(s)
   if s.q then return s.q.title end
   if s.kind == "travel" then return ns.mapName(s.map) end
+  if s.kind == "ride" then
+    if s.mode == "fly" then return "to " .. (s.toName or ns.mapName(s.toMap)) end
+    if s.mode == "hearth" then return "to " .. (s.name or ns.mapName(s.toMap)) end
+    return "to " .. ns.mapName(s.toMap)
+  end
   if s.kind == "grind" then return "Grind or run a dungeon" end
   return "?"
 end
@@ -60,6 +77,11 @@ local function stepDetail(s)
   if s.kind == "turnin" then return q.ender ~= "" and ("to " .. q.ender) or "" end
   if s.kind == "do" then return (q.om and q.om > 0) and "objectives" or "objectives (the data has no spot for them: see your quest log)" end
   if s.kind == "travel" then return string.format("%d worthwhile quests start there", ns.int(s.count)) end
+  if s.kind == "ride" then
+    if s.mode == "fly" then return "flight master at " .. (s.fromName or "?") end
+    if s.mode == "hearth" then return "use your hearthstone here" end
+    return s.name or ""
+  end
   if s.kind == "abandon" then return string.format("too low now: %d XP left in it", ns.int(s.xp)) end
   if s.kind == "grind" then return string.format("no worthwhile quests left until level %d", ns.int(s.toLevel)) end
   return ""
@@ -67,7 +89,7 @@ end
 
 -- Kept for Core's messages and the tests: one line of text for a step.
 function ns.StepText(s, long)
-  local k = KIND[s.kind] or KIND.grind
+  local k = kindOf(s)
   local text = hex(k.color) .. k.label .. "|r " .. stepTitle(s)
   if s.q and s.kind ~= "abandon" then text = text .. " |cff9d9d9d[" .. s.q.lv .. "]|r" end
   if s.kind == "turnin" and s.xp then text = text .. " |cff9d9d9d+" .. s.xp .. " XP|r" end
@@ -123,7 +145,7 @@ end
 local function showTooltip(owner, s)
   if not s then return end
   GameTooltip:SetOwner(owner, "ANCHOR_LEFT")
-  local k = KIND[s.kind] or KIND.grind
+  local k = kindOf(s)
   GameTooltip:AddLine(hex(k.color) .. k.label .. "|r " .. stepTitle(s), 1, 1, 1, true)
   local d = stepDetail(s)
   if d ~= "" then GameTooltip:AddLine(d, 0.8, 0.8, 0.8, true) end
@@ -211,14 +233,14 @@ local function setRowStep(r, s, i)
   r.step = s
   r.sep:Hide(); r.sepLine:Hide()
   r.icon:Show(); r.text:Show(); r.right:Show()
-  local k = KIND[s.kind] or KIND.grind
+  local k = kindOf(s)
   r.icon:SetTexture(k.icon)
   r.icon:SetVertexColor(1, 1, 1)
   local lv = ""
   if s.q and s.kind ~= "abandon" then lv = " " .. hex(questColor(s.q.lv)) .. "[" .. s.q.lv .. "]|r" end
   r.text:SetText(hex(k.color) .. k.label .. "|r  " .. stepTitle(s) .. lv)
   if s.kind == "turnin" and s.xp then r.right:SetText("|cff7fd88a+" .. s.xp .. "|r")
-  elseif s.kind == "travel" then r.right:SetText(fmtTime(s.time and ns.steps[i - 1] and (s.time - (ns.steps[i - 1].time or 0)) or 0))
+  elseif s.kind == "travel" or s.kind == "ride" then r.right:SetText(fmtTime(s.time and ns.steps[i - 1] and (s.time - (ns.steps[i - 1].time or 0)) or 0))
   else r.right:SetText("") end
 end
 
@@ -396,7 +418,7 @@ local function updateCard(s)
     card:SetHeight(58)
     return
   end
-  local k = KIND[s.kind] or KIND.grind
+  local k = kindOf(s)
   card.stripe:SetColorTexture(k.color[1], k.color[2], k.color[3], 1)
   card.icon:SetTexture(k.icon)
   local lv = s.q and s.kind ~= "abandon" and ("  " .. hex(questColor(s.q.lv)) .. "level " .. s.q.lv .. "|r") or ""
@@ -429,7 +451,8 @@ local function updateUI()
   if sum then
     local last = steps[#steps]
     frame.plan:SetText(string.format("Route: level %d%s in about %s, %d steps planned", ns.int(sum.toLevel),
-      (sum.toLevel > sum.fromLevel and last and last.levelPct) and (" (" .. last.levelPct .. "%)") or "", fmtTime(last and last.time or 0), #steps))
+      (sum.toLevel > sum.fromLevel and last and last.levelPct) and (" (" .. last.levelPct .. "%)") or "", fmtTime(last and last.time or 0), #steps)
+      .. ((sum.parked and #sum.parked > 0) and string.format(", %d parked", #sum.parked) or ""))
   else
     frame.plan:SetText("")
   end
@@ -516,7 +539,7 @@ local function createArrow()
     if not s or not s.map or s.map == 0 or not ns.opts().arrow then
       self.tex:Hide(); self.glow:SetAlpha(0); self.title:SetText(""); self.dist:SetText(""); return
     end
-    local k = KIND[s.kind] or KIND.grind
+    local k = kindOf(s)
     self.title:SetText(hex(k.color) .. k.label .. "|r " .. stepTitle(s))
     local pos = ns.position()
     local c1, px, py
@@ -602,6 +625,15 @@ local function createMinimapButton()
     GameTooltip:AddLine("Forever Route", 0.31, 0.76, 0.97)
     local s = ns.steps and ns.steps[1]
     if s then GameTooltip:AddLine(plain(ns.StepText(s)), 1, 1, 1, true) end
+    local parked = ns.summary and ns.summary.parked or {}
+    if #parked > 0 then
+      GameTooltip:AddLine("Parked until the route passes by:", 0.6, 0.6, 0.6)
+      for i, q in ipairs(parked) do
+        if i > 8 then GameTooltip:AddLine("...", 0.6, 0.6, 0.6) break end
+        local m = q.em and q.em > 0 and q.em or q.sm
+        GameTooltip:AddDoubleLine(q.title, ns.mapName(m), 1, 1, 1, 0.6, 0.6, 0.6)
+      end
+    end
     GameTooltip:AddLine("Left-click: show or hide   Right-click: settings   Drag: move", 0.6, 0.6, 0.6, true)
     GameTooltip:Show()
   end)
