@@ -163,9 +163,24 @@ local q866 = ns.Q[866]
 local function canTake(skills) return ns.available(q866, { done = {}, log = {}, level = 16, classBit = 128, raceBit = 16, skills = skills }, { skip = {} }) end
 assert(not canTake({ [197] = 101, [333] = 40 }), "Root Samples needs Herbalism")
 assert(canTake({ [182] = 50 }), "with Herbalism you can take it")
-assert(canTake(nil), "no skill list yet: don't hide it")
+assert(canTake(nil), "no skill list given to the planner: don't hide it")
+-- What Core hands the planner: Dig Rat Stew needs Cooking, which this character doesn't have.
+local q862 = ns.Q[862]
+local function core(q) return ns.available(q, { done = {}, log = {}, level = 20, classBit = 128, raceBit = 16, skills = (ns.readSkills()) }, { skip = {} }) end
+assert(not core(q862) and not core(q866), "no Cooking, no Herbalism: both left out")
+local realLines = skillLines
+skillLines = {} -- the skill list can't be read: what was seen before still counts
+assert(not core(q862), "unreadable list: still no Cooking")
+skillLines = { { "Professions", true, false } } -- collapsed header: remembered skills fill in
+assert(ns.readSkills()[197] == 101, "remembered Tailoring")
+ForeverRouteCharDB.skills = nil
+skillLines = {}
+assert(not core(q862), "never seen a skill list: profession quests left out")
+skillLines = realLines
+SlashCmdList.FOREVERROUTE("skills")
 table.insert(skillLines, { "Herbalism", false, nil, 50 })
 fire("SKILL_LINES_CHANGED"); flush()
+assert(core(q866), "with Herbalism Root Samples comes back")
 -- A flight: take off from a "Fly to" step, plan from where it lands, plan again on landing.
 local onTaxi = false
 UnitOnTaxi = function() return onTaxi end

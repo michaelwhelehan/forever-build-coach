@@ -220,20 +220,41 @@ local SKILL_IDS = {
   ["Lederverarbeitung"] = 165, ["Bergbau"] = 186, ["Kürschnerei"] = 393, ["Schneiderei"] = 197, ["Angeln"] = 356,
   ["Kochkunst"] = 185, ["Erste Hilfe"] = 129,
 }
-local function readSkills()
+-- Returns the skills, and how the list was read: "full", "partial" (a header is collapsed, so some are hidden) or nil.
+local function scanSkills()
   if not (GetNumSkillLines and GetSkillLineInfo) then return nil end
-  local skills, seen = {}, 0
-  for i = 1, GetNumSkillLines() do
-    local name, header, _, rank = GetSkillLineInfo(i)
-    if not header then
+  local skills, seen, collapsed = {}, 0, false
+  for i = 1, GetNumSkillLines() or 0 do
+    local name, header, expanded, rank = GetSkillLineInfo(i)
+    if header then
+      if not expanded then collapsed = true end
+    else
       seen = seen + 1
       local id = name and SKILL_IDS[name]
       if id then skills[id] = rank or 1 end
     end
   end
-  if seen == 0 then return nil end -- skill list not loaded yet: don't hide anything
-  return skills
+  if seen == 0 then return nil end
+  return skills, collapsed and "partial" or "full"
 end
+
+-- What the planner gets. A full skill list is remembered for this character; with part of the list hidden (a collapsed
+-- header) the remembered skills fill the gaps; before the list has ever been read, profession quests are left out
+-- (an empty list) rather than shown to someone who can't take them.
+local function readSkills()
+  local db = ns.charDB()
+  local skills, how = scanSkills()
+  if how == "full" then
+    db.skills = skills
+  elseif how == "partial" then
+    for id, rank in pairs(db.skills or {}) do if not skills[id] then skills[id] = rank end end
+    db.skills = skills
+  else
+    skills = db.skills or {}
+  end
+  return skills, how
+end
+ns.readSkills = readSkills
 
 -- The game's objective lines for a quest in your log: { { text, finished }, ... }
 function ns.objectives(questID)
@@ -414,6 +435,16 @@ SlashCmdList.FOREVERROUTE = ns.guard("/fr", function(input)
     ns.Replan("opts")
   elseif cmd == "options" or cmd == "settings" or cmd == "config" then
     if ns.ToggleSettings then ns.ToggleSettings() end
+  elseif cmd == "skills" then
+    local skills, how = readSkills()
+    local EN = { [182] = "Herbalism", [186] = "Mining", [393] = "Skinning", [171] = "Alchemy", [164] = "Blacksmithing",
+      [333] = "Enchanting", [202] = "Engineering", [165] = "Leatherworking", [197] = "Tailoring", [356] = "Fishing",
+      [185] = "Cooking", [129] = "First Aid" }
+    local list = {}
+    for id, rank in pairs(skills) do list[#list + 1] = (EN[id] or id) .. " " .. rank end
+    table.sort(list)
+    msg("professions I can see: " .. (#list > 0 and table.concat(list, ", ") or "none") .. " (" .. (how == "full" and "from your skill list"
+      or how == "partial" and "part of your skill list is collapsed, the rest remembered" or "skill list not readable, using what I remembered") .. ")")
   elseif cmd == "refresh" then
     loadCompleted(); ns.Replan("refresh")
   elseif cmd == "reset" then
@@ -422,7 +453,7 @@ SlashCmdList.FOREVERROUTE = ns.guard("/fr", function(input)
     if ns.ResetUI then ns.ResetUI() end
     msg("settings reset.")
   else
-    msg("/fr  show or hide | /fr options  settings window | /fr skip  skip the current quest | /fr unskip | /fr minxp 60  lowest XP % worth doing |"
+    msg("/fr  show or hide | /fr options  settings window | /fr skip  skip the current quest | /fr unskip | /fr minxp 60  lowest XP % worth doing | /fr skills |"
       .. " /fr above 3  levels above you | /fr dungeons | /fr group | /fr arrow | /fr pin | /fr refresh | /fr reset")
   end
 end)

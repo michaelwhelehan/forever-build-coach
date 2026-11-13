@@ -319,12 +319,18 @@ function ns.Plan(state)
 
     -- Every action you could take next and how long it takes to get there (walking, flights, zeppelins).
     local best, bestCost, bestT
+    -- Also the quest in your log that pays best per second (a big hand-in across the zone), for when nothing is close.
+    local top, topRate, topT
     local function consider(kind, q, m, x, y, bias)
       if not m or m == 0 then return end
       local t = travelTime(m, x, y)
       local cost = t * (bias or 1)
       if not bestCost or cost < bestCost or (cost == bestCost and q.id < best.q.id) then
         best, bestCost, bestT = { kind = kind, q = q, map = m, x = x, y = y }, cost, t
+      end
+      if kind ~= "accept" then
+        local r = rateOf(kind, q, t)
+        if not topRate or r > topRate then top, topRate, topT = { kind = kind, q = q, map = m, x = x, y = y }, r, t end
       end
     end
     local pending = 0
@@ -356,6 +362,9 @@ function ns.Plan(state)
     -- When the nearest thing left is far away (a quest in your log across the world), is a zone worth more per second?
     -- Then the far quest waits until the route passes by.
     local zm, zx, zy, zn, zRate
+    if best and bestT > LOCAL_SECONDS and top and top ~= best and topRate > rateOf(best.kind, best.q, bestT) then
+      best, bestT = top, topT -- nothing close: go for the quest that pays best, not just the nearest
+    end
     if (not best or bestT > LOCAL_SECONDS) and sim.logCount < LOG_SIZE then
       zm, zx, zy, zn, zRate = bestZone()
       if zm and best and (zm == best.map or zRate < rateOf(best.kind, best.q, bestT) * ZONE_SWITCH) then zm = nil end
