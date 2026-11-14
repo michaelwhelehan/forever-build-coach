@@ -1,7 +1,7 @@
 -- Reads QuestieDB's Forever data (https://github.com/Questie/QuestieDB, GPL-3.0) as plain data, for the Forever Route
 -- build. Every file runs in an empty sandbox: no io, os, require or loading, only the stand-ins its format expects.
 -- Applies, in QuestieDB's order: raw Forever entities, the generated delta-base, players' traces, authored Forever fixes.
--- Returns { quests, npcs, objects, items, keys, areaToMap, races } (rows are QuestieDB's positional rows).
+-- Returns { quests, npcs, objects, items, keys, areaToMap, races, seen } (rows are QuestieDB's positional rows).
 
 return function(root)
   local function sandbox(extra)
@@ -132,6 +132,7 @@ return function(root)
     { "item", "foreverItemFixes.lua" },
   }
   local report = {}
+  local seen = {} -- quests players' traces or Forever's own fixes mention: seen in the live game, not only in its files
   for _, f in ipairs(files) do
     local modules = {}
     local env = sandbox({ QuestieLoader = makeLoader(modules), Questie = setmetatable({}, { __index = function() return function() end end }) })
@@ -142,7 +143,12 @@ return function(root)
         for name, fn in pairs(m) do
           if type(fn) == "function" and (name == "Load" or name:match("^Load")) then
             local ok2, patch = pcall(fn, m)
-            if ok2 and type(patch) == "table" then apply(f[1], patch); for _ in pairs(patch) do applied = applied + 1 end
+            if ok2 and type(patch) == "table" then
+              apply(f[1], patch)
+              for id in pairs(patch) do
+                applied = applied + 1
+                if f[1] == "quest" and not f[2]:find("^generated/") then seen[id] = true end
+              end
             elseif not ok2 then err = patch end
           end
         end
@@ -163,5 +169,5 @@ return function(root)
   end
 
   return { quests = data.quest, npcs = data.npc, objects = data.object, items = data.item, keys = keys,
-    areaToMap = areaToMap, races = flavor.raceKeys or {}, report = report }
+    areaToMap = areaToMap, races = flavor.raceKeys or {}, report = report, seen = seen }
 end

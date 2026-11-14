@@ -182,7 +182,14 @@ local Qq = qdb and qdb.quests or {}
 local ids = {}
 for id in pairs(qc) do ids[id] = true end
 for id in pairs(qf) do ids[id] = true end
-for id in pairs(Qq) do ids[id] = true end
+-- QuestieDB's raw Forever data comes from the game's files, which hold quests that aren't in the live game (the Duskwood
+-- Missions: their quest giver isn't there). Keep a quest from it only if ForeverDB knows it or players' traces or
+-- Forever's own fixes mention it.
+local filesOnly = 0
+for id in pairs(Qq) do
+  if qc[id] or qf[id] or (qdb and qdb.seen and qdb.seen[id]) then ids[id] = true else filesOnly = filesOnly + 1 end
+end
+io.stderr:write("left out ", filesOnly, " quests that are only in the game's files (not seen on Forever)\n")
 
 -- QuestieDB helpers: spawns as {uiMap, x, y}.
 local unmapped = false -- set when a spawn is only inside an instance or another map we can't place
