@@ -135,9 +135,21 @@ npm run check     # what CI runs: typecheck, tests, Wrangler dry-run build
 ## Gold finder (optional)
 
 Every few hours the cron saves your auction house's prices to a D1 database, picks candidates with
-simple maths (items under 60% of their 7-day average, prices over 140% of it, greens worth more as
-enchanting materials) and asks Claude Haiku to rank the best ten. `gold_opportunities` returns the
-latest list. Without an Anthropic key you still get the maths-only list.
+simple maths (items under 60% of their usual price, the 7-day median, prices over 140% of it, greens
+worth more as enchanting materials), adds how well each one actually sells, and asks Claude Haiku to
+rank the best ten. `gold_opportunities` returns the latest list. Without an Anthropic key you still get
+the maths-only list.
+
+The same setup also keeps a finer price history for the watched houses (`price_history`):
+
+- **Trade goods hourly, 60 days.** Every time the cron reads the house (about hourly), each trade good's
+  lowest, market price, units and listings go into the `hourly` table, one row per item per UTC day with
+  the day's hours as JSON. That's about one row written per item per hour, plus one deleted per item per
+  day, well inside D1's free 100k rows written a day.
+- **Sales, every item.** Each read's auctions are compared with the previous read's (kept in KV). An
+  auction that vanished with 2+ hours left counts as bought, one that vanished near expiry as ended, and
+  new ones as posted. Cancellations look like sales, so it's an upper bound. The counts go into the
+  `sales` table, one row per house per day. Needs the KV namespace, and Blizzard's auction ids.
 
 1. `npx wrangler d1 create forever-build-coach`, then uncomment the `[[d1_databases]]` block in
    `wrangler.toml` and paste the id.

@@ -67,7 +67,7 @@ export function groupHouses(list: { id: number; name: string }[]): HouseInfo[] {
   });
 }
 
-type RawAuction = { item?: { id?: number }; buyout?: number; unit_price?: number; quantity?: number };
+export type RawAuction = { id?: number; time_left?: string; item?: { id?: number }; buyout?: number; unit_price?: number; quantity?: number };
 
 /**
  * Boils a house's auctions and commodities down to one row per item.
@@ -106,6 +106,8 @@ export function summarise(auctions: RawAuction[]): { items: Record<string, Price
 export class AuctionPrices {
   private mem = new Map<string, HouseSnapshot>();
   private houseList = new Map<Region, { at: number; houses: HouseInfo[] }>();
+  /** Called after every download of a house with its summary and raw auctions (price history uses it). */
+  onRefresh?: (snap: HouseSnapshot, raw: RawAuction[]) => Promise<void>;
   constructor(private blizzard: Blizzard, private kv?: KvLike) {}
 
   get enabled() { return this.blizzard.enabled; }
@@ -145,6 +147,7 @@ export class AuctionPrices {
     const snap: HouseSnapshot = { region, houseId, name: String(house.name ?? `House ${houseId}`), scannedAt: new Date().toISOString(), listings, items };
     this.mem.set(`${region}:${houseId}`, snap);
     await this.kv?.put(`ah:${region}:${houseId}`, JSON.stringify(snap), { expirationTtl: KV_TTL_S }).catch(() => undefined);
+    await this.onRefresh?.(snap, all).catch((e) => console.error(`after refresh ${houseId}:`, e));
     return snap;
   }
 
