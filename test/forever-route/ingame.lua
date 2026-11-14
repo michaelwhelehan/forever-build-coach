@@ -120,6 +120,10 @@ ns.UpdateUI()
 local card = ForeverRouteFrame.card
 print("card:", plain(card.kind._text), "|", plain(card.title._text), "|", plain(card.detail._text))
 print("bar:", plain(ForeverRouteFrame.bar.text._text)); print("plan:", plain(ForeverRouteFrame.plan._text))
+print("best:", plain(ForeverRouteFrame.best._text or ""))
+assert(ForeverRouteFrame.best._text and ForeverRouteFrame.best._text:find("Best zone for level"), "best zone line")
+SlashCmdList.FOREVERROUTE("zones")
+assert(ns.zones and #ns.zones >= 3 and ns.zones[1].rate > 0, "zones ranked")
 for i, r in ipairs(ForeverRouteFrame.rows) do if r._shown and (rawget(r.text, "_text") or rawget(r.sep, "_text")) then
   print("row", i, r.step and plain(r.text._text) or ("-- " .. plain(r.sep._text)), r.step and plain(r.right._text or "") or "") end end
 print("height", ForeverRouteFrame:GetHeight())

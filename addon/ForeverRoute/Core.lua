@@ -314,10 +314,20 @@ function ns.Replan(reason)
     map = pos.map, x = pos.x, y = pos.y, done = done, log = log, opts = opts,
     skills = readSkills(), viaDone = ns.charDB().via, knownNodes = knownNodes(), hearth = hearthSpot(), hearthCooldown = hearthCooldown(),
   }
+  local okR, router = pcall(ns.NewRouter, { run = ns.pace(level).r or 7, known = state.knownNodes, hearth = state.hearth, flights = opts.flights,
+    hearthstone = opts.hearthstone })
+  if okR then state.router = router end
   local ok, steps, summary = pcall(ns.Plan, state)
   if not ok then
     msg("couldn't plan (" .. tostring(steps) .. ")")
     return
+  end
+  -- The best zones for your level, shown beside the route. Only worked out again when your level changes or every
+  -- few minutes, not on every step.
+  local now = GetTime and GetTime() or 0
+  if not ns.zones or ns.zonesLevel ~= level or now - (ns.zonesAt or 0) > 300 or reason == "settings" or reason == "opts" then
+    local okZ, zones = pcall(ns.RankZones, state, 5)
+    if okZ then ns.zones, ns.zonesLevel, ns.zonesAt = zones, level, now end
   end
 
   -- After a level up, say which planned quests dropped out (grey or too little XP now).
@@ -435,6 +445,14 @@ SlashCmdList.FOREVERROUTE = ns.guard("/fr", function(input)
     ns.Replan("opts")
   elseif cmd == "options" or cmd == "settings" or cmd == "config" then
     if ns.ToggleSettings then ns.ToggleSettings() end
+  elseif cmd == "zones" then
+    ns.zones = nil; ns.Replan("zones")
+    if not ns.zones or #ns.zones == 0 then msg("no zone has 4 or more worthwhile quests for you right now.") return end
+    msg("best zones for level " .. UnitLevel("player") .. " (XP per hour while questing there):")
+    for i, z in ipairs(ns.zones) do
+      msg(string.format("%d. %s: %d quests, %s XP (%.1f levels), ~%s XP/h%s", i, z.name, ns.int(z.n), ns.int(z.xp), z.levels,
+        ns.int(z.rate), z.travel and string.format(", %d min away", ns.int(z.travel / 60 + 0.5)) or ""))
+    end
   elseif cmd == "skills" then
     local skills, how = readSkills()
     local EN = { [182] = "Herbalism", [186] = "Mining", [393] = "Skinning", [171] = "Alchemy", [164] = "Blacksmithing",
@@ -453,7 +471,7 @@ SlashCmdList.FOREVERROUTE = ns.guard("/fr", function(input)
     if ns.ResetUI then ns.ResetUI() end
     msg("settings reset.")
   else
-    msg("/fr  show or hide | /fr options  settings window | /fr skip  skip the current quest | /fr unskip | /fr minxp 60  lowest XP % worth doing | /fr skills |"
+    msg("/fr  show or hide | /fr options  settings window | /fr skip  skip the current quest | /fr unskip | /fr minxp 60  lowest XP % worth doing | /fr zones  best zones for your level | /fr skills |"
       .. " /fr above 3  levels above you | /fr dungeons | /fr group | /fr arrow | /fr pin | /fr refresh | /fr reset")
   end
 end)

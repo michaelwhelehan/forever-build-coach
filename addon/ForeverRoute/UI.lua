@@ -312,11 +312,15 @@ local function createWindow()
   frame.plan:SetPoint("TOPLEFT", bar, "BOTTOMLEFT", 0, -4)
   frame.plan:SetPoint("TOPRIGHT", bar, "BOTTOMRIGHT", 0, -4)
   frame.plan:SetJustifyH("LEFT")
+  frame.best = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+  frame.best:SetPoint("TOPLEFT", frame.plan, "BOTTOMLEFT", 0, -2)
+  frame.best:SetPoint("TOPRIGHT", frame.plan, "BOTTOMRIGHT", 0, -2)
+  frame.best:SetJustifyH("LEFT")
 
   -- Card for the current step.
   local card = CreateFrame("Button", nil, frame)
-  card:SetPoint("TOPLEFT", frame.plan, "BOTTOMLEFT", 0, -6)
-  card:SetPoint("TOPRIGHT", frame.plan, "BOTTOMRIGHT", 0, -6)
+  card:SetPoint("TOPLEFT", frame.best, "BOTTOMLEFT", 0, -6)
+  card:SetPoint("TOPRIGHT", frame.best, "BOTTOMRIGHT", 0, -6)
   card:SetHeight(64)
   card.bg = fill(card, "BACKGROUND", C.card, 1); card.bg:SetAllPoints()
   card.stripe = card:CreateTexture(nil, "ARTWORK")
@@ -470,6 +474,14 @@ local function updateUI()
   else
     frame.plan:SetText("")
   end
+  local z = ns.zones and ns.zones[1]
+  if z then
+    local here = pos.map == z.map
+    frame.best:SetText(string.format("Best zone for level %d: |cff4fc3f7%s|r%s", ns.int(ns.zonesLevel or 0), z.name,
+      here and " (you're here)" or (z.travel and string.format(", %d min away", ns.int(z.travel / 60 + 0.5)) or "")))
+  else
+    frame.best:SetText("")
+  end
   updateCard(steps[1])
   frame.collapse.icon:SetTexture(o.collapsed and "Interface\\Buttons\\UI-PlusButton-Up" or "Interface\\Buttons\\UI-MinusButton-Up")
 
@@ -502,7 +514,7 @@ local function updateUI()
   end
   for i = used + 1, #rows do rows[i]:Hide(); rows[i].step = nil end
 
-  local h = 24 + 8 + 14 + 4 + 12 + 6 + frame.card:GetHeight() + 8
+  local h = 24 + 8 + 14 + 4 + 12 + 2 + 12 + 6 + frame.card:GetHeight() + 8
   if used > 0 then h = h + 14 + y end
   h = h + 36
   frame:SetHeight(h)
@@ -647,6 +659,13 @@ local function createMinimapButton()
     GameTooltip:AddLine("Forever Route", 0.31, 0.76, 0.97)
     local s = ns.steps and ns.steps[1]
     if s then GameTooltip:AddLine(plain(ns.StepText(s)), 1, 1, 1, true) end
+    if ns.zones and #ns.zones > 0 then
+      GameTooltip:AddLine("Best zones for your level (XP per hour questing there):", 0.6, 0.6, 0.6)
+      for i, z in ipairs(ns.zones) do
+        GameTooltip:AddDoubleLine(string.format("%d. %s  (%d quests, %.1f levels)", i, z.name, ns.int(z.n), z.levels),
+          string.format("%dk/h", ns.int(z.rate / 1000 + 0.5)), 1, 1, 1, 0.31, 0.76, 0.97)
+      end
+    end
     local parked = ns.summary and ns.summary.parked or {}
     if #parked > 0 then
       GameTooltip:AddLine("Parked until the route passes by:", 0.6, 0.6, 0.6)

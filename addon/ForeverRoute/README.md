@@ -23,6 +23,7 @@ unlock, and quests already in your log that aren't worth it any more show up as 
   dungeon and group quests, steps shown, scale, opacity, lock, arrow, map pin, minimap button.
 - Hover a step for details (quest level, XP, objectives from your log). Right-click a step, or press **Skip**,
   to leave a quest out (`/fr unskip` brings them all back).
+- `/fr zones`: the five best zones for your level, by XP per hour while questing there (quest XP plus mobs, over objectives and walking), with how many quests, how many levels they are worth and how far away they are. The best one is shown under the route line, and the minimap button tooltip lists all five.
 - `/fr skills`: show which professions the route thinks you have. Quests that need one you don't have (Dig Rat Stew needs Cooking, Root Samples needs Herbalism) are left out.
 - `/fr minxp 60`: leave out quests worth less than this % of their XP. ForeverDB's rule: 100% up to 5 levels
   below you, then 80, 60, 40, 20, 10%. 60 means quests up to 7 levels below you.

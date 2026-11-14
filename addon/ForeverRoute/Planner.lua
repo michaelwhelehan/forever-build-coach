@@ -114,6 +114,7 @@ end
 
 -- Classic's XP for killing a mob of your level (WoW Forever may differ).
 local function killXp(level) return 45 + 5 * level end
+ns.pace = pace
 
 local function xpToLevel(sim)
   if sim.level == sim.realLevel and sim.realXpMax and sim.realXpMax > 0 then return sim.realXpMax end
@@ -419,4 +420,78 @@ function ns.Plan(state)
     startXp = startXp, parked = parked,
   }
   return steps, summary
+end
+
+-- Capitals: quest givers and hand-ins, not places to level.
+local CITIES = { [1453] = true, [1454] = true, [1455] = true, [1456] = true, [1457] = true, [1458] = true }
+ns.CITIES = CITIES
+
+--[[ The best zones to level in at your level, wherever you are: for each zone, the worthwhile quests whose work is there
+  (new ones you can take, and ones in your log), their XP (quest XP plus the mobs on the way) and the time to do them
+  (objectives, and the walks from the quest giver to the objectives and back, half of it shared with other quests).
+  Same state as ns.Plan. Returns { { map, name, n, xp, levels, rate (XP per hour), travel (seconds from you) } },
+  best first, and only zones with at least 4 quests. ]]
+function ns.RankZones(state, count)
+  local Q = ns.LoadQuests()
+  local opts = {}
+  for k, v in pairs(DEFAULTS) do opts[k] = v end
+  for k, v in pairs(state.opts or {}) do opts[k] = v end
+  opts.skip = opts.skip or {}
+  local level = state.level
+  local sim = { level = level, done = state.done or {}, log = state.log or {}, skills = state.skills,
+    classBit = state.classBit or 0, raceBit = state.raceBit or 0 }
+  local router = state.router or ns.NewRouter({ run = pace(level).r or 7, known = state.knownNodes, flights = opts.flights,
+    hearthstone = false })
+  local function walk(m1, x1, y1, m2, x2, y2)
+    if not m1 or not m2 or m1 == 0 or m2 == 0 then return 60 end
+    return (router:time({ map = m1, x = x1, y = y1 }, { map = m2, x = x2, y = y2 }, false))
+  end
+  local perKill = (pace(level).c or 30)
+  local function questXp(q) return q.xp * xpRatio(level, q.lv) + (q.effort / perKill) * killXp(level) * 0.6 end
+
+  local zones = {}
+  local function count1(q, xp, t)
+    local m = (q.om and q.om > 0 and q.om) or (q.em and q.em > 0 and q.em) or q.sm
+    if not m or m == 0 or CITIES[m] then return end
+    local z = zones[m] or { map = m, n = 0, xp = 0, t = 0, x = 0, y = 0 }
+    zones[m] = z
+    z.n, z.xp, z.t = z.n + 1, z.xp + xp, z.t + t
+    local _, x, y = objectiveSpot(q)
+    if not x then x, y = q.sx, q.sy end
+    z.x, z.y = z.x + (x or 50), z.y + (y or 50)
+  end
+  for _, q in pairs(Q) do
+    if q.sm and q.sm > 0 and available(q, sim, opts) and worth(q, level, opts) then
+      local om, ox, oy = objectiveSpot(q)
+      local legs = om and (walk(q.sm, q.sx, q.sy, om, ox, oy) + walk(om, ox, oy, q.em, q.ex, q.ey))
+        or walk(q.sm, q.sx, q.sy, q.em, q.ex, q.ey)
+      count1(q, questXp(q), q.effort + 20 + legs * 0.5)
+    end
+  end
+  for id, e in pairs(sim.log) do
+    local q = Q[id]
+    if q and not opts.skip[id] and xpRatio(level, q.lv) * 100 >= opts.minXpPct then
+      count1(q, e.complete and q.xp * xpRatio(level, q.lv) or questXp(q), e.complete and 30 or q.effort + 30)
+    end
+  end
+
+  local toLevel = XP_TO_LEVEL[level] or 1e9
+  local list = {}
+  for m, z in pairs(zones) do
+    if z.n >= 4 then
+      z.x, z.y = z.x / z.n, z.y / z.n
+      z.rate = floor(z.xp / math.max(z.t, 60) * 3600)
+      z.levels = z.xp / toLevel
+      z.name = mapName(m)
+      z.travel = state.map and (router:time({ map = state.map, x = state.x, y = state.y }, { map = m, x = z.x, y = z.y }, false)) or nil
+      z.xp = floor(z.xp)
+      list[#list + 1] = z
+    end
+  end
+  -- Ranked by XP per hour counting a 10 minute trip to get there (the same for every zone, so the answer doesn't depend on
+  -- where you stand): a zone with lots to do beats a quick handful of quests, as long as it pays about as well.
+  for _, z in ipairs(list) do z.score = z.xp / (z.t + 600) end
+  table.sort(list, function(a, b) return a.score > b.score end)
+  for i = (count or 5) + 1, #list do list[i] = nil end
+  return list
 end
