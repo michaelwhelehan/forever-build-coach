@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { Region } from "./blizzard.js";
 import type { AuctionPrices, HouseSnapshot } from "./auctions.js";
+import { median, sellThrough, MIN_SALES_HOURS, type PriceHistory } from "./price-history.js";
 
 /**
  * Gold finder: keeps a price history for one or two auction houses in D1, picks likely money makers
@@ -64,6 +65,8 @@ export interface Candidate {
   lowestNow: number;
   marketNow: number;
   avg7d?: number;
+  /** Median market price over the last 7 days: the "usual" price dips and spikes are measured against. */
+  median7d?: number;
   unitsNow: number;
   samples?: number;
   /** For disenchant: expected value of the materials at today's prices. */
@@ -71,6 +74,8 @@ export interface Candidate {
   enchantingSkill?: number;
   /** Rough copper profit per unit after the 5% cut, before the AI's judgement. */
   roughProfit: number;
+  /** Estimated from auctions vanishing between reads (see price-history.ts). Missing = not tracked yet. */
+  sales?: { days: number; soldUnitsPerDay?: number; sellRatePct?: number; avgSoldPrice?: number };
 }
 
 export interface Opportunity {
@@ -130,7 +135,7 @@ const utcDay = (t: number) => new Date(t).toISOString().slice(0, 10);
 
 export class GoldFinder {
   private ready?: Promise<void>;
-  constructor(private db: D1Like, private settings: GoldSettings, private claude?: ClaudeLike, private itemInfo?: ItemInfo) {}
+  constructor(private db: D1Like, private settings: GoldSettings, private claude?: ClaudeLike, private itemInfo?: ItemInfo, private history?: PriceHistory) {}
 
   get houseIds() { return this.settings.houseIds; }
   get settingsView() { return { region: this.settings.region, houseIds: this.settings.houseIds, dailyBudgetUsd: this.settings.dailyBudgetUsd, everyHours: this.settings.everyHours, ai: Boolean(this.claude) }; }
@@ -174,21 +179,35 @@ export class GoldFinder {
     for (let i = 0; i < stmts.length; i += 50) await this.db.batch(stmts.slice(i, i + 50));
   }
 
-  /** The maths part: items well under their weekly average, well over it, and greens worth more as enchanting mats. */
+  /** The maths part: items well under their usual (7-day median) price, well over it, and greens worth more as enchanting mats. */
   async candidates(houseId: number, snap: HouseSnapshot, now = Date.now()): Promise<Candidate[]> {
     await this.init();
     const since = Math.floor(now / 1000) - HISTORY_DAYS * 86400;
-    const { results } = await this.db.prepare("SELECT item_id, AVG(market) AS avg, COUNT(*) AS n FROM prices WHERE house_id = ? AND at >= ? GROUP BY item_id").bind(houseId, since).all<{ item_id: number; avg: number; n: number }>();
+    const { results } = await this.db.prepare("SELECT item_id, AVG(market) AS avg, MIN(market) AS lo, MAX(market) AS hi, COUNT(*) AS n FROM prices WHERE house_id = ? AND at >= ? GROUP BY item_id").bind(houseId, since).all<{ item_id: number; avg: number; lo: number; hi: number; n: number }>();
     const history = new Map(results.map((r) => [r.item_id, r]));
+    // The median (which one silly listing can't drag) decides. It lies between the lowest and highest market
+    // price, so only items that could pass against those bounds need their median worked out.
+    const maybe: number[] = [];
+    for (const [key, [min, market]] of Object.entries(snap.items)) {
+      const h = history.get(Number(key));
+      if (h && h.n >= 3 && h.hi >= 50 && (min < h.hi * 0.6 || market > h.lo * 1.4)) maybe.push(Number(key));
+    }
+    const medians = new Map<number, number>();
+    for (let i = 0; i < maybe.length; i += 90) {
+      const ids = maybe.slice(i, i + 90);
+      const { results: rows } = await this.db.prepare(`SELECT item_id, market FROM prices WHERE house_id = ? AND at >= ? AND item_id IN (${ids.map(() => "?").join(", ")})`).bind(houseId, since, ...ids).all<{ item_id: number; market: number }>();
+      const by = new Map<number, number[]>();
+      for (const r of rows) (by.get(r.item_id) ?? by.set(r.item_id, []).get(r.item_id)!).push(r.market);
+      for (const [id, v] of by) medians.set(id, Math.round(median(v)!));
+    }
     const out: Candidate[] = [];
-    for (const [key, [min, market, units]] of Object.entries(snap.items)) {
-      const id = Number(key);
-      const h = history.get(id);
-      if (h && h.n >= 3) {
-        const avg = Math.round(h.avg);
-        if (avg >= 50 && min < avg * 0.6) out.push({ itemId: id, kind: "dip", lowestNow: min, marketNow: market, avg7d: avg, unitsNow: units, samples: h.n, roughProfit: Math.round(avg * AH_KEEP - min) });
-        else if (avg >= 50 && market > avg * 1.4) out.push({ itemId: id, kind: "spike", lowestNow: min, marketNow: market, avg7d: avg, unitsNow: units, samples: h.n, roughProfit: Math.round(market * AH_KEEP - avg) });
-      }
+    for (const id of maybe) {
+      const [min, market, units] = snap.items[String(id)];
+      const h = history.get(id)!, usual = medians.get(id);
+      if (!usual || usual < 50) continue;
+      const base = { itemId: id, lowestNow: min, marketNow: market, avg7d: Math.round(h.avg), median7d: usual, unitsNow: units, samples: h.n };
+      if (min < usual * 0.6) out.push({ ...base, kind: "dip", roughProfit: Math.round(usual * AH_KEEP - min) });
+      else if (market > usual * 1.4) out.push({ ...base, kind: "spike", roughProfit: Math.round(market * AH_KEEP - usual) });
     }
     if (this.itemInfo) {
       for (const [key, [min, market, units]] of Object.entries(snap.items)) {
@@ -199,7 +218,12 @@ export class GoldFinder {
       }
       for (const c of out) c.name ??= (await this.itemInfo(c.itemId).catch(() => undefined))?.n;
     }
-    return out.sort((a, b) => b.roughProfit - a.roughProfit).slice(0, MAX_CANDIDATES);
+    const picked = out.sort((a, b) => b.roughProfit - a.roughProfit).slice(0, MAX_CANDIDATES);
+    if (this.history && picked.length) {
+      const s = await this.history.sales(houseId, 14, picked.map((c) => c.itemId), now).catch(() => undefined);
+      if (s && s.days * 24 >= MIN_SALES_HOURS) for (const c of picked) { const t = sellThrough(s.byItem.get(c.itemId), s.days); c.sales = { days: t.days, soldUnitsPerDay: t.soldUnitsPerDay, sellRatePct: t.sellRatePct, avgSoldPrice: t.avgSoldPrice }; }
+    }
+    return picked;
   }
 
   async spentToday(now = Date.now()): Promise<{ day: string; usd: number; calls: number }> {
@@ -218,7 +242,7 @@ export class GoldFinder {
       opportunities: cands.slice(0, 10).map((c) => ({
         itemId: c.itemId, item: c.name ?? `Item ${c.itemId}`,
         action: c.kind === "dip" ? "buy_and_relist" : c.kind === "disenchant" ? "buy_to_disenchant" : "sell_now",
-        buyAtMostCopper: c.kind === "spike" ? 0 : c.lowestNow, sellAtCopper: c.kind === "spike" ? c.marketNow : (c.avg7d ?? c.disenchantValue ?? 0),
+        buyAtMostCopper: c.kind === "spike" ? 0 : c.lowestNow, sellAtCopper: c.kind === "spike" ? c.marketNow : (c.median7d ?? c.avg7d ?? c.disenchantValue ?? 0),
         expectedProfitCopper: c.roughProfit, why: c.kind, risk: "high", noteworthy: false,
       })),
     });
@@ -245,9 +269,10 @@ export class GoldFinder {
       `Auction house: ${snap.name} (id ${snap.houseId}), WoW: Forever, prices read ${snap.scannedAt}. All prices in copper (100 copper = 1 silver, 100 silver = 1 gold). The auction house keeps 5% of each sale.`,
       `Player: ${this.settings.player}`,
       "Candidates found by simple rules:",
-      "- dip: lowest listing is under 60% of its 7-day average market price (buy and relist).",
-      "- spike: market price is over 140% of its 7-day average (sell any you have, or farm or craft it now).",
+      "- dip: lowest listing is under 60% of its usual price, median7d, the median market price of the last 7 days (buy and relist). avg7d is the plain average, which one silly listing can drag up.",
+      "- spike: market price is over 140% of median7d (sell any you have, or farm or craft it now).",
       "- disenchant: a green item listed for less than its expected enchanting materials, using the Classic 1.12 disenchant table (a baseline, Forever may differ). enchantingSkill is the skill needed.",
+      "sales, when present, is estimated from auctions that vanished between hourly reads while they still had hours left (or stacks that shrank), over the last `days` days: soldUnitsPerDay, sellRatePct (share of ended auctions that were bought rather than expiring) and avgSoldPrice (copper per unit actually paid). Cancelled auctions also count as sold, so treat it as an upper bound. An item with no sales object isn't tracked yet (unknown, not zero); a sales object with soldUnitsPerDay 0 means nothing sold in that time, which makes a relist risky. Prefer flips that actually sell, and judge sellAtCopper against avgSoldPrice when it exists.",
       "",
       JSON.stringify(cands),
       "",

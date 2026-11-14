@@ -16,6 +16,7 @@ import * as xp from "./formulas/xp.js";
 import { netAfterCut, formatCopper, AH_CUT } from "./formulas/gold.js";
 import { AuctionPrices, GROUP_RULESETS, type Faction, type HouseInfo } from "./sources/auctions.js";
 import type { GoldFinder } from "./sources/gold.js";
+import { profile, belowUsual, sellThrough, type PriceHistory } from "./sources/price-history.js";
 
 export const VERSION = "0.6.0";
 
@@ -34,7 +35,7 @@ Rules for every answer (full text: kb_guide topic "rules"):
 
 Good starting points: character_lookup (if the player gives name + surname), gear_upgrades (the in-game addon's FBC1 line, or character_lookup's gear), find_items, levelling_guide ("what next", "which talent"), profession_guide (what to craft next), gold_guide, talent_tree, levelling_plan, profession_cost. Use the optimize_build prompt for a full review.`;
 
-export interface Deps { everloot: Everloot; foreverdb: ForeverDb; foreverdbSite?: ForeverDbSite; catalog?: ItemCatalog; guides?: Guides; blizzard: Blizzard; browser?: BrowserWorker; auctions?: AuctionPrices; gold?: GoldFinder }
+export interface Deps { everloot: Everloot; foreverdb: ForeverDb; foreverdbSite?: ForeverDbSite; catalog?: ItemCatalog; guides?: Guides; blizzard: Blizzard; browser?: BrowserWorker; auctions?: AuctionPrices; gold?: GoldFinder; history?: PriceHistory }
 
 type Src = { id: string; name: string; url: string; credit?: string };
 
@@ -792,7 +793,7 @@ export function createServer(deps: Deps): McpServer {
 
   server.registerTool("gold_opportunities", {
     title: "Gold opportunities on the auction house",
-    description: "The latest auction house money makers the server found for its watched house: items listed well under their 7-day average (buy and relist), prices spiking (sell now), and cheap greens worth more disenchanted. A few times a day the server saves prices to its database, picks candidates with simple maths and has Claude Haiku rank them, within a daily spending cap. Give sinceIso to get only the finds flagged noteworthy after that time.",
+    description: "The latest auction house money makers the server found for its watched house: items listed well under their usual price, the 7-day median (buy and relist), prices spiking (sell now), and cheap greens worth more disenchanted. A few times a day the server saves prices to its database, picks candidates with simple maths, adds how well each item actually sells (estimated from auctions vanishing between hourly reads) and has Claude Haiku rank them, within a daily spending cap. Give sinceIso to get only the finds flagged noteworthy after that time.",
     inputSchema: {
       houseId: z.number().int().positive().optional().describe("Defaults to the first watched house."),
       sinceIso: z.string().optional().describe("ISO time: return only noteworthy finds saved after it."),
@@ -821,6 +822,71 @@ export function createServer(deps: Deps): McpServer {
       confidence: single({ tier: "official", ageDays: (Date.now() - Date.parse(a.at)) / 86_400_000, note: "listing prices from Blizzard; disenchant values use the Classic 1.12 table" }),
       sources: credit,
       notes: ["Asking prices, not sale prices: check the listing in game before you buy.", "Disenchant odds are the Classic 1.12 baseline; Forever may differ.", "Profits are after the 5% auction house cut."],
+    });
+  }));
+
+  server.registerTool("price_history", {
+    title: "Price history and sell-through",
+    description: "Hourly auction prices for trade goods (cloth, leather, herbs, ore, enchanting mats, elementals...) on the server's watched house, kept 60 days, plus how well items sell. With itemId: every saved hour, the typical price by hour of day and weekday (UTC), the lowest listing now against the 7-day median, and sales per day. Without itemId: one row per trade good with its cheapest and dearest hour, swing, how far under its usual price it is now, and sales per day; filter with category. Sales are estimated for every item, not just trade goods, from auctions that vanish between reads while they still had hours left (cancellations count too).",
+    inputSchema: {
+      itemId: z.number().int().positive().optional(),
+      category: z.string().optional().describe("Trade goods kind, e.g. Herb, Cloth, Leather, Metal & Stone, Enchanting, Elemental, Meat."),
+      days: z.number().int().min(1).max(60).default(14),
+      houseId: z.number().int().positive().optional().describe("Defaults to the first watched house."),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, safe(async ({ itemId, category, days, houseId }) => {
+    const h = deps.history;
+    if (!h) return reply({ error: "Price history isn't switched on here. It needs a D1 database bound as DB and GOLD_HOUSE_IDS set." });
+    const id = houseId ?? h.watched[0];
+    if (!h.watches(id)) return fail(`House ${id} isn't watched. Watched: ${h.watched.join(", ")}.`);
+    const now = Date.now();
+    const credit = [{ ...sourceRef("blizzard"), credit: BLIZZARD_CREDIT }];
+    const notes = [
+      "Prices in copper, asking prices of listings, not sale prices. Hours and weekdays are UTC.",
+      "Market = average of the cheapest 15% of units. Typical = median market price over the period.",
+      "Sales: an auction that vanished between two reads with 2+ hours left, or a stack that shrank, counts as bought (a cancellation looks the same, so treat it as an upper bound). sellRatePct = bought / (bought + ended near expiry). sales.days is the hours of reads compared, divided by 24; under half a day, treat the rates as unknown.",
+      "lowestNow / pctOfUsual are left out when the item wasn't listed in the last 3 hours (sold out or not seen).",
+    ];
+    const coverage = await h.coverage(id);
+    if (itemId) {
+      const [points, sales, info] = await Promise.all([h.points(id, itemId, days, now), h.sales(id, Math.min(days, 60), [itemId], now), deps.catalog?.get(itemId).catch(() => undefined)]);
+      const last = points[points.length - 1];
+      const listedNow = Boolean(last && now - last.at < 3 * 3600_000);
+      return reply({
+        houseId: id, itemId, item: info?.n, url: itemUrl(itemId), category: await h.tradeGood(itemId), days, coverage,
+        profile: profile(points),
+        listedNow,
+        latest: last ? { at: new Date(last.at).toISOString(), lowest: last.lowest, market: last.market, units: last.units, ...(listedNow ? belowUsual(points, last.lowest, now) : {}) } : undefined,
+        sales: sellThrough(sales.byItem.get(itemId), sales.days),
+        points: points.map((p) => ({ at: new Date(p.at).toISOString(), lowest: p.lowest, market: p.market, units: p.units, listings: p.listings })),
+        ...(points.length ? {} : { note: "No hourly prices for this item. Only trade goods are saved hourly; sales are still tracked for every item." }),
+        confidence: single({ tier: "official", ageDays: last ? (now - last.at) / 86_400_000 : undefined, note: "Blizzard listings; sales are an estimate" }),
+        sources: credit, notes,
+      });
+    }
+    const [all, sales] = await Promise.all([h.allPoints(id, days, now), h.sales(id, Math.min(days, 60), undefined, now)]);
+    const want = category?.toLowerCase().trim();
+    const items = [];
+    for (const [iid, pts] of all) {
+      const cat = await h.tradeGood(iid);
+      if (want && !(cat ?? "").toLowerCase().includes(want)) continue;
+      const pr = profile(pts), last = pts[pts.length - 1], st = sellThrough(sales.byItem.get(iid), sales.days);
+      const listed = Boolean(last && now - last.at < 3 * 3600_000);
+      const hourPrice = (hr?: number) => pr.byHourUtc.find((x) => x.hour === hr)?.market;
+      items.push({
+        itemId: iid, item: (await deps.catalog?.get(iid).catch(() => undefined))?.n ?? `Item ${iid}`, category: cat ?? "Trade Goods",
+        typical: pr.typical, cheapestHourUtc: pr.cheapestHourUtc, cheapPrice: hourPrice(pr.cheapestHourUtc), dearestHourUtc: pr.dearestHourUtc, dearPrice: hourPrice(pr.dearestHourUtc), swingPct: pr.swingPct,
+        lowestNow: listed ? last.lowest : undefined, unitsNow: listed ? last.units : 0, pctOfUsual: listed ? belowUsual(pts, last.lowest, now).pctOfUsual : undefined,
+        soldUnitsPerDay: st.soldUnitsPerDay, sellRatePct: st.sellRatePct, samples: pr.samples, daysOfData: pr.days,
+      });
+    }
+    items.sort((a, b) => (b.swingPct ?? -1) - (a.swingPct ?? -1));
+    return reply({
+      houseId: id, days, category, coverage, salesDays: sales.days,
+      belowUsualNow: items.filter((x) => x.pctOfUsual !== undefined && x.pctOfUsual <= 70).map((x) => ({ itemId: x.itemId, item: x.item, lowestNow: x.lowestNow, pctOfUsual: x.pctOfUsual })),
+      items,
+      sources: credit, notes,
     });
   }));
 

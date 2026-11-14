@@ -8,6 +8,7 @@ import { Guides } from "./sources/guides.js";
 import { Blizzard, type Region } from "./sources/blizzard.js";
 import { AuctionPrices } from "./sources/auctions.js";
 import { GoldFinder, goldSettingsFrom, type D1Like } from "./sources/gold.js";
+import { PriceHistory } from "./sources/price-history.js";
 import Anthropic from "@anthropic-ai/sdk";
 import type { KvLike } from "./cache.js";
 
@@ -69,10 +70,16 @@ export function depsFor(env: Env): Deps {
     const gold = goldSettingsFrom(env);
     if (env.DB && gold) {
       const catalog = cached.deps.catalog;
+      // Hourly trade goods prices and sales estimates for the watched houses, saved after every download.
+      const history = new PriceHistory(env.DB, gold.houseIds, catalog ? (id) => catalog.get(id) : undefined, env.CACHE);
+      const ah = cached.deps.auctions;
+      ah.onRefresh = (snap, raw) => (snap.region === gold.region ? history.record(snap, raw) : Promise.resolve());
+      cached.deps.history = history;
       cached.deps.gold = new GoldFinder(
         env.DB, gold,
         env.ANTHROPIC_API_KEY ? new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, maxRetries: 1 }) : undefined,
         catalog ? (id) => catalog.get(id) : undefined,
+        history,
       );
     }
   }
