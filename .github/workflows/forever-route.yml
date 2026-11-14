@@ -1,0 +1,46 @@
+name: Forever Route addon
+on:
+  push:
+    paths: ["addon/ForeverRoute/**", "scripts/build-forever-route.lua", "scripts/fetch-foreverdb-data.sh", "test/forever-route/**", ".github/workflows/forever-route.yml"]
+  workflow_dispatch:
+  schedule:
+    - cron: "17 5 * * *" # daily: ForeverDB updates its data often
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq lua5.1
+      - name: Download ForeverDB's addon data
+        run: scripts/fetch-foreverdb-data.sh .foreverdb-data
+      - name: Get QuestieDB's Forever data (fills objective spots, givers and factions ForeverDB lacks)
+        run: |
+          git clone -q --depth 1 --filter=blob:none --sparse https://github.com/Questie/QuestieDB.git .questiedb
+          git -C .questiedb sparse-checkout set data/Forever src/corrections/Forever src/corrections/enum
+          echo "QuestieDB $(git -C .questiedb rev-parse --short HEAD)"
+      - name: Build Data.lua
+        run: lua5.1 scripts/build-forever-route.lua .foreverdb-data addon/ForeverRoute/Data.lua .questiedb
+      - name: Test the planner and the addon against a stand-in game API
+        run: |
+          lua5.1 test/forever-route/ingame.lua addon/ForeverRoute/Data.lua
+          lua5.1 test/forever-route/simulate.lua addon/ForeverRoute/Data.lua 1 300 | tail -25
+          lua5.1 test/forever-route/simulate.lua addon/ForeverRoute/Data.lua 20 60 1413 51.7 30.9 | tail -8
+      - name: Zip
+        run: |
+          cp /usr/share/common-licenses/GPL-3 addon/ForeverRoute/COPYING.txt || curl -fsS --max-time 60 https://www.gnu.org/licenses/gpl-3.0.txt -o addon/ForeverRoute/COPYING.txt
+          cd addon && zip -qr ../ForeverRoute.zip ForeverRoute -x 'ForeverRoute/*.md' && cd .. && unzip -l ForeverRoute.zip
+      - uses: actions/upload-artifact@v4
+        with: { name: ForeverRoute, path: ForeverRoute.zip }
+      - name: Publish the release zip (main only)
+        if: github.ref == 'refs/heads/main'
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          notes="Forever Route addon with ForeverDB.net quest data from $(date -u +%F). Unzip into World of Warcraft/_forever_/Interface/AddOns/. Data from ForeverDB.net and QuestieDB (GPL-3.0)."
+          if gh release view forever-route >/dev/null 2>&1; then
+            gh release upload forever-route ForeverRoute.zip --clobber
+            gh release edit forever-route --notes "$notes"
+          else
+            gh release create forever-route ForeverRoute.zip --title "Forever Route (latest)" --notes "$notes" --latest=false
+          fi
