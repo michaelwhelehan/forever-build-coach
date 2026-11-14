@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { Region } from "./blizzard.js";
 import type { AuctionPrices, HouseSnapshot } from "./auctions.js";
-import { median, sellThrough, type PriceHistory } from "./price-history.js";
+import { median, sellThrough, MIN_SALES_HOURS, type PriceHistory } from "./price-history.js";
 
 /**
  * Gold finder: keeps a price history for one or two auction houses in D1, picks likely money makers
@@ -183,13 +183,14 @@ export class GoldFinder {
   async candidates(houseId: number, snap: HouseSnapshot, now = Date.now()): Promise<Candidate[]> {
     await this.init();
     const since = Math.floor(now / 1000) - HISTORY_DAYS * 86400;
-    const { results } = await this.db.prepare("SELECT item_id, AVG(market) AS avg, COUNT(*) AS n FROM prices WHERE house_id = ? AND at >= ? GROUP BY item_id").bind(houseId, since).all<{ item_id: number; avg: number; n: number }>();
+    const { results } = await this.db.prepare("SELECT item_id, AVG(market) AS avg, MIN(market) AS lo, MAX(market) AS hi, COUNT(*) AS n FROM prices WHERE house_id = ? AND at >= ? GROUP BY item_id").bind(houseId, since).all<{ item_id: number; avg: number; lo: number; hi: number; n: number }>();
     const history = new Map(results.map((r) => [r.item_id, r]));
-    // The average is a cheap first pass; the median (which one silly listing can't drag) decides.
+    // The median (which one silly listing can't drag) decides. It lies between the lowest and highest market
+    // price, so only items that could pass against those bounds need their median worked out.
     const maybe: number[] = [];
     for (const [key, [min, market]] of Object.entries(snap.items)) {
       const h = history.get(Number(key));
-      if (h && h.n >= 3 && h.avg >= 50 && (min < h.avg * 0.8 || market > h.avg * 1.2)) maybe.push(Number(key));
+      if (h && h.n >= 3 && h.hi >= 50 && (min < h.hi * 0.6 || market > h.lo * 1.4)) maybe.push(Number(key));
     }
     const medians = new Map<number, number>();
     for (let i = 0; i < maybe.length; i += 90) {
@@ -220,7 +221,7 @@ export class GoldFinder {
     const picked = out.sort((a, b) => b.roughProfit - a.roughProfit).slice(0, MAX_CANDIDATES);
     if (this.history && picked.length) {
       const s = await this.history.sales(houseId, 14, picked.map((c) => c.itemId), now).catch(() => undefined);
-      if (s?.days) for (const c of picked) { const t = sellThrough(s.byItem.get(c.itemId), s.days); c.sales = { days: t.days, soldUnitsPerDay: t.soldUnitsPerDay, sellRatePct: t.sellRatePct, avgSoldPrice: t.avgSoldPrice }; }
+      if (s && s.days * 24 >= MIN_SALES_HOURS) for (const c of picked) { const t = sellThrough(s.byItem.get(c.itemId), s.days); c.sales = { days: t.days, soldUnitsPerDay: t.soldUnitsPerDay, sellRatePct: t.sellRatePct, avgSoldPrice: t.avgSoldPrice }; }
     }
     return picked;
   }
@@ -271,7 +272,7 @@ export class GoldFinder {
       "- dip: lowest listing is under 60% of its usual price, median7d, the median market price of the last 7 days (buy and relist). avg7d is the plain average, which one silly listing can drag up.",
       "- spike: market price is over 140% of median7d (sell any you have, or farm or craft it now).",
       "- disenchant: a green item listed for less than its expected enchanting materials, using the Classic 1.12 disenchant table (a baseline, Forever may differ). enchantingSkill is the skill needed.",
-      "sales, when present, is estimated from auctions that vanished between hourly reads while they still had hours left, over the last `days` days: soldUnitsPerDay, sellRatePct (share of ended auctions that were bought rather than expiring) and avgSoldPrice (copper per unit actually paid). Cancelled auctions also count as sold, so treat it as an upper bound. An item with no sales object isn't tracked yet (unknown, not zero); a sales object with soldUnitsPerDay 0 means nothing sold in that time, which makes a relist risky. Prefer flips that actually sell, and judge sellAtCopper against avgSoldPrice when it exists.",
+      "sales, when present, is estimated from auctions that vanished between hourly reads while they still had hours left (or stacks that shrank), over the last `days` days: soldUnitsPerDay, sellRatePct (share of ended auctions that were bought rather than expiring) and avgSoldPrice (copper per unit actually paid). Cancelled auctions also count as sold, so treat it as an upper bound. An item with no sales object isn't tracked yet (unknown, not zero); a sales object with soldUnitsPerDay 0 means nothing sold in that time, which makes a relist risky. Prefer flips that actually sell, and judge sellAtCopper against avgSoldPrice when it exists.",
       "",
       JSON.stringify(cands),
       "",

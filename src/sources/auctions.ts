@@ -106,7 +106,7 @@ export function summarise(auctions: RawAuction[]): { items: Record<string, Price
 export class AuctionPrices {
   private mem = new Map<string, HouseSnapshot>();
   private houseList = new Map<Region, { at: number; houses: HouseInfo[] }>();
-  /** Called after every download of a house with its summary and raw auctions (price history uses it). */
+  /** Called after each cron download of a house with its summary and raw auctions (price history uses it). Not on user requests, so they don't wait for it and two writers never overlap. */
   onRefresh?: (snap: HouseSnapshot, raw: RawAuction[]) => Promise<void>;
   constructor(private blizzard: Blizzard, private kv?: KvLike) {}
 
@@ -132,7 +132,7 @@ export class AuctionPrices {
   }
 
   /** Downloads one house and stores its summary. */
-  async refresh(region: Region, houseId: number): Promise<HouseSnapshot> {
+  async refresh(region: Region, houseId: number, fromCron = false): Promise<HouseSnapshot> {
     const base = `/data/wow/ruleset/${LIST_RULESET}/auctions/${houseId}`;
     const house = await this.blizzard.raw(region, base, "dynamic");
     let all = (house.auctions ?? []) as RawAuction[];
@@ -147,7 +147,7 @@ export class AuctionPrices {
     const snap: HouseSnapshot = { region, houseId, name: String(house.name ?? `House ${houseId}`), scannedAt: new Date().toISOString(), listings, items };
     this.mem.set(`${region}:${houseId}`, snap);
     await this.kv?.put(`ah:${region}:${houseId}`, JSON.stringify(snap), { expirationTtl: KV_TTL_S }).catch(() => undefined);
-    await this.onRefresh?.(snap, all).catch((e) => console.error(`after refresh ${houseId}:`, e));
+    if (fromCron) await this.onRefresh?.(snap, all).catch((e) => console.error(`after refresh ${houseId}:`, e));
     return snap;
   }
 
@@ -175,7 +175,7 @@ export class AuctionPrices {
     const due = ages.filter((a) => Date.now() - a.at > 50 * 60_000).sort((a, b) => a.at - b.at).slice(0, count);
     const done: number[] = [];
     for (const d of due) {
-      try { await this.refresh(region, d.id); done.push(d.id); } catch (e) { console.error(`auction refresh ${region} ${d.id} failed:`, e); }
+      try { await this.refresh(region, d.id, true); done.push(d.id); } catch (e) { console.error(`auction refresh ${region} ${d.id} failed:`, e); }
     }
     return done;
   }

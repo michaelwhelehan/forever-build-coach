@@ -57,9 +57,16 @@ describe("hourly trade goods prices", () => {
 
 describe("sales from vanished auctions", () => {
   it("counts auctions gone with hours left as sold, near-expiry ones as ended, new ones as posted", () => {
-    const prev = { at: 0, a: [[1, 2447, 20, 25, 3], [2, 2447, 10, 30, 2], [3, 2447, 5, 40, 0], [4, 833, 1, 15000, 3]] as [number, number, number, number, number][] };
+    const prev = { at: 0, a: [[1, 2447, 20, 25, 3], [2, 2447, 10, 30, 2], [3, 2447, 5, 40, 0], [4, 833, 1, 15000, 3], [6, 2589, 5, 10, -1]] as [number, number, number, number, number][] };
     const now = { at: HOUR, a: [[4, 833, 1, 15000, 3], [5, 2447, 20, 24, 3]] as [number, number, number, number, number][] };
-    expect(diffAuctions(prev, now)).toEqual({ 2447: [30, 2, 1, 1, 20 * 25 + 10 * 30] });
+    // Auction 6 had no time_left: it ended, but nobody can say it sold.
+    expect(diffAuctions(prev, now)).toEqual({ 2447: [30, 2, 1, 1, 20 * 25 + 10 * 30], 2589: [0, 0, 1, 0, 0] });
+  });
+
+  it("counts a stack that got smaller as partly bought", () => {
+    const prev = { at: 0, a: [[1, 2770, 200, 15, 3]] as [number, number, number, number, number][] };
+    const now = { at: HOUR, a: [[1, 2770, 50, 15, 3]] as [number, number, number, number, number][] };
+    expect(diffAuctions(prev, now)).toEqual({ 2770: [150, 0, 0, 0, 2250] });
   });
 
   it("adds each read's sales to the day and reports them per day", async () => {
@@ -70,11 +77,12 @@ describe("sales from vanished auctions", () => {
     await h.record(snap(T0 + 11 * HOUR, {}), [auction(2, 833, 1, 16000), auction(4, 833, 1, 17000)]);
     await h.record(snap(T0 + 12 * HOUR, {}), [auction(4, 833, 1, 17000)]);
     const { days, byItem } = await h.sales(114, 7, [833, 2447], T0 + 12 * HOUR);
-    expect(days).toBe(1);
+    // Two hours of reads compared: a twelfth of a day, not a whole one.
+    expect(days).toBe(0.08);
     expect(byItem.get(833)).toEqual([2, 2, 0, 1, 31000]);
     expect(byItem.get(2447)).toEqual([0, 0, 1, 0, 0]);
-    expect(sellThrough(byItem.get(833), days)).toMatchObject({ soldUnitsPerDay: 2, sellRatePct: 100, avgSoldPrice: 15500 });
-    expect(sellThrough(byItem.get(2447), days)).toMatchObject({ soldUnitsPerDay: 0, sellRatePct: 0 });
+    expect(sellThrough(byItem.get(833), 1)).toMatchObject({ soldUnitsPerDay: 2, sellRatePct: 100, avgSoldPrice: 15500 });
+    expect(sellThrough(byItem.get(2447), 1)).toMatchObject({ soldUnitsPerDay: 0, sellRatePct: 0 });
     expect((await h.sales(114, 7, undefined, T0 + 12 * HOUR)).byItem.size).toBe(2);
   });
 
@@ -82,8 +90,10 @@ describe("sales from vanished auctions", () => {
     const db = fakeD1();
     const h = new PriceHistory(db, [114], itemClass, fakeKv());
     await h.record(snap(T0, {}), [auction(1, 833, 1, 15000)]);
-    await h.record(snap(T0 + 5 * HOUR, {}), [auction(2, 833, 1, 15000)]);
-    expect((await h.sales(114, 7, [833], T0 + 5 * HOUR)).days).toBe(0);
+    // Two hours apart: an auction with LONG (2h+) left could have expired in between.
+    await h.record(snap(T0 + 2 * HOUR, {}), [auction(2, 833, 1, 15000)]);
+    expect((await h.sales(114, 7, [833], T0 + 2 * HOUR)).byItem.size).toBe(0);
+    expect((await h.sales(114, 7, [], T0 + 2 * HOUR)).days).toBe(0);
   });
 });
 
@@ -113,12 +123,23 @@ describe("gold finder with price history", () => {
     const g = new GoldFinder(db, settings, undefined, undefined, h);
     // Lifestone usually 10g; one scan had a silly 100g listing as its market price, dragging the average to 32.5g.
     for (const [i, m] of [100000, 10000, 10000, 10000].entries()) await g.saveHistory(114, snap(T0 + i * 4 * HOUR, { 833: [m, m, 3, 3] }), T0 + i * 4 * HOUR);
-    await h.record(snap(T0 + 14 * HOUR, {}), [auction(1, 833, 1, 10000), auction(2, 833, 1, 10500)]);
-    await h.record(snap(T0 + 15 * HOUR, {}), [auction(2, 833, 1, 10500)]);
+    await h.record(snap(T0 + 2 * HOUR, {}), [auction(1, 833, 1, 10000), auction(2, 833, 1, 10500)]);
+    // Twelve hours of reads in which one Lifestone sold: half a day, so 2 a day.
+    for (let i = 3; i <= 14; i++) await h.record(snap(T0 + i * HOUR, {}), [auction(2, 833, 1, 10500)]);
     // 8g is under 60% of the 32.5g average, but only 80% of the 10g median: not a dip.
     expect(await g.candidates(114, snap(T0 + 16 * HOUR, { 833: [8000, 9000, 3, 3] }), T0 + 16 * HOUR)).toEqual([]);
     const c = await g.candidates(114, snap(T0 + 16 * HOUR, { 833: [4000, 9000, 3, 3] }), T0 + 16 * HOUR);
     expect(c).toHaveLength(1);
-    expect(c[0]).toMatchObject({ kind: "dip", median7d: 10000, avg7d: 32500, roughProfit: 5500, sales: { days: 1, soldUnitsPerDay: 1, sellRatePct: 100, avgSoldPrice: 10000 } });
+    expect(c[0]).toMatchObject({ kind: "dip", median7d: 10000, avg7d: 32500, roughProfit: 5500, sales: { days: 0.5, soldUnitsPerDay: 2, sellRatePct: 100, avgSoldPrice: 10000 } });
+  });
+
+  it("still finds a spike against the median when an old silly listing drags the average up", async () => {
+    const db = fakeD1();
+    const g = new GoldFinder(db, settings, undefined, undefined, new PriceHistory(db, [114], itemClass));
+    for (const [i, m] of [100000, 10000, 10000, 10000, 10000].entries()) await g.saveHistory(114, snap(T0 + i * 4 * HOUR, { 833: [m, m, 3, 3] }), T0 + i * 4 * HOUR);
+    // Average 28g, median 10g: 15g is a 50% spike over the usual price, though under the average.
+    const c = await g.candidates(114, snap(T0 + 20 * HOUR, { 833: [15000, 15000, 3, 3] }), T0 + 20 * HOUR);
+    expect(c).toMatchObject([{ kind: "spike", median7d: 10000 }]);
+    expect(c[0].sales).toBeUndefined();
   });
 });

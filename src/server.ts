@@ -845,16 +845,19 @@ export function createServer(deps: Deps): McpServer {
     const notes = [
       "Prices in copper, asking prices of listings, not sale prices. Hours and weekdays are UTC.",
       "Market = average of the cheapest 15% of units. Typical = median market price over the period.",
-      "Sales: an auction that vanished between two reads with 2+ hours left counts as bought (a cancellation looks the same, so treat it as an upper bound). sellRatePct = bought / (bought + ended near expiry). Unknown until the server has tracked a day.",
+      "Sales: an auction that vanished between two reads with 2+ hours left, or a stack that shrank, counts as bought (a cancellation looks the same, so treat it as an upper bound). sellRatePct = bought / (bought + ended near expiry). sales.days is the hours of reads compared, divided by 24; under half a day, treat the rates as unknown.",
+      "lowestNow / pctOfUsual are left out when the item wasn't listed in the last 3 hours (sold out or not seen).",
     ];
     const coverage = await h.coverage(id);
     if (itemId) {
       const [points, sales, info] = await Promise.all([h.points(id, itemId, days, now), h.sales(id, Math.min(days, 60), [itemId], now), deps.catalog?.get(itemId).catch(() => undefined)]);
       const last = points[points.length - 1];
+      const listedNow = Boolean(last && now - last.at < 3 * 3600_000);
       return reply({
         houseId: id, itemId, item: info?.n, url: itemUrl(itemId), category: await h.tradeGood(itemId), days, coverage,
         profile: profile(points),
-        now: last ? { at: new Date(last.at).toISOString(), lowest: last.lowest, market: last.market, units: last.units, ...belowUsual(points, last.lowest, now) } : undefined,
+        listedNow,
+        latest: last ? { at: new Date(last.at).toISOString(), lowest: last.lowest, market: last.market, units: last.units, ...(listedNow ? belowUsual(points, last.lowest, now) : {}) } : undefined,
         sales: sellThrough(sales.byItem.get(itemId), sales.days),
         points: points.map((p) => ({ at: new Date(p.at).toISOString(), lowest: p.lowest, market: p.market, units: p.units, listings: p.listings })),
         ...(points.length ? {} : { note: "No hourly prices for this item. Only trade goods are saved hourly; sales are still tracked for every item." }),
@@ -869,11 +872,12 @@ export function createServer(deps: Deps): McpServer {
       const cat = await h.tradeGood(iid);
       if (want && !(cat ?? "").toLowerCase().includes(want)) continue;
       const pr = profile(pts), last = pts[pts.length - 1], st = sellThrough(sales.byItem.get(iid), sales.days);
+      const listed = Boolean(last && now - last.at < 3 * 3600_000);
       const hourPrice = (hr?: number) => pr.byHourUtc.find((x) => x.hour === hr)?.market;
       items.push({
         itemId: iid, item: (await deps.catalog?.get(iid).catch(() => undefined))?.n ?? `Item ${iid}`, category: cat ?? "Trade Goods",
         typical: pr.typical, cheapestHourUtc: pr.cheapestHourUtc, cheapPrice: hourPrice(pr.cheapestHourUtc), dearestHourUtc: pr.dearestHourUtc, dearPrice: hourPrice(pr.dearestHourUtc), swingPct: pr.swingPct,
-        lowestNow: last?.lowest, unitsNow: last?.units, pctOfUsual: belowUsual(pts, last?.lowest ?? 0, now).pctOfUsual,
+        lowestNow: listed ? last.lowest : undefined, unitsNow: listed ? last.units : 0, pctOfUsual: listed ? belowUsual(pts, last.lowest, now).pctOfUsual : undefined,
         soldUnitsPerDay: st.soldUnitsPerDay, sellRatePct: st.sellRatePct, samples: pr.samples, daysOfData: pr.days,
       });
     }

@@ -17,8 +17,13 @@ import type { D1Like, D1Stmt } from "./gold.js";
  */
 
 export const KEEP_DAYS = 60;
-/** Reads further apart than this can't tell sold from expired, so they only reset the comparison. */
-const MAX_GAP_MS = 3 * 3600_000;
+/**
+ * Reads further apart than this can't tell sold from expired, so they only reset the comparison.
+ * An auction counts as bought when it vanishes with LONG (2h+) left, so the gap must stay under 2 hours.
+ */
+const MAX_GAP_MS = 110 * 60_000;
+/** Sales numbers are shown only once this many hours of reads have been compared. */
+export const MIN_SALES_HOURS = 12;
 const PREV_TTL_S = 6 * 3600;
 
 const SCHEMA = [
@@ -36,7 +41,10 @@ export const TRADE_GOODS: Record<number, string> = {
 /** One auction as Blizzard lists it; `id` and `time_left` are what sales tracking needs. */
 export type { RawAuction } from "./auctions.js";
 
-/** Per item per day: [units sold, auctions sold, auctions ended near expiry (sold or expired), auctions posted, copper sold]. */
+/**
+ * Per item per day: [units sold, auctions sold, auctions ended near expiry (sold or expired), auctions posted, copper sold].
+ * Each day's row also has "_hours": how many hours of reads were compared, so partial days count as partial.
+ */
 export type SaleRow = [number, number, number, number, number];
 
 export type ItemClass = (id: number) => Promise<{ n: string; c: number; sc: number } | undefined>;
@@ -83,10 +91,9 @@ export class PriceHistory {
     if (!this.itemClass) return;
     const t = Date.parse(snap.scannedAt);
     const day = utcDay(t), hour = String(new Date(t).getUTCHours());
-    const rows: [number, string][] = [];
-    for (const [id, row] of Object.entries(snap.items)) {
-      if (await this.tradeGood(Number(id))) rows.push([Number(id), JSON.stringify({ [hour]: row })]);
-    }
+    const entries = Object.entries(snap.items);
+    const kinds = await Promise.all(entries.map(([id]) => this.tradeGood(Number(id))));
+    const rows: [number, string][] = entries.flatMap(([id, row], i) => (kinds[i] ? [[Number(id), JSON.stringify({ [hour]: row })] as [number, string]] : []));
     // D1 allows 100 bound values per statement: 4 columns, 25 rows each.
     const stmts: D1Stmt[] = [];
     for (let i = 0; i < rows.length; i += 25) {
@@ -107,7 +114,7 @@ export class PriceHistory {
       const item = a.item?.id, qty = Math.max(1, a.quantity ?? 1);
       const unit = a.unit_price ?? (a.buyout ? a.buyout / qty : undefined);
       if (!a.id || !item || !unit) continue;
-      now.a.push([a.id, item, qty, Math.round(unit), TIME_LEFT[a.time_left ?? ""] ?? 3]);
+      now.a.push([a.id, item, qty, Math.round(unit), TIME_LEFT[a.time_left ?? ""] ?? -1]);
     }
     if (!now.a.length) return; // this API gives no auction ids: sales can't be tracked
     const key = `ah-prev:${snap.region}:${snap.houseId}`;
@@ -115,12 +122,12 @@ export class PriceHistory {
     await this.kv.put(key, JSON.stringify(now), { expirationTtl: PREV_TTL_S });
     if (!prev || t <= prev.at || t - prev.at > MAX_GAP_MS) return;
     const counts = diffAuctions(prev, now);
-    if (!Object.keys(counts).length) return;
     const day = utcDay(t);
     const row = await this.db.prepare("SELECT body FROM sales WHERE house_id = ? AND day = ?").bind(snap.houseId, day).first<{ body: string }>();
-    const body = row ? (JSON.parse(row.body) as Record<string, SaleRow>) : {};
+    const body = row ? (JSON.parse(row.body) as Record<string, SaleRow | number>) : {};
+    body._hours = Math.round(((Number(body._hours) || 0) + (t - prev.at) / 3600_000) * 100) / 100;
     for (const [id, c] of Object.entries(counts)) {
-      const b = body[id] ?? [0, 0, 0, 0, 0];
+      const b = (body[id] as SaleRow | undefined) ?? [0, 0, 0, 0, 0];
       body[id] = b.map((v, i) => v + c[i]) as SaleRow;
     }
     await this.db.prepare("INSERT INTO sales (house_id, day, body) VALUES (?, ?, ?) ON CONFLICT (house_id, day) DO UPDATE SET body = excluded.body").bind(snap.houseId, day, JSON.stringify(body)).run();
@@ -160,23 +167,33 @@ export class PriceHistory {
     return out;
   }
 
-  /** Sales counts per item over the last `days` days (today included). Only the items asked for, or all. */
+  /**
+   * Sales counts per item over the last `days` days (today included), only the items asked for or all.
+   * `days` in the answer is the hours of reads actually compared, divided by 24.
+   */
   async sales(houseId: number, days: number, itemIds?: number[], now = Date.now()): Promise<{ days: number; byItem: Map<number, SaleRow> }> {
     await this.init();
     const since = utcDay(now - (days - 1) * 86400_000);
     const byItem = new Map<number, SaleRow>();
-    let n = 0;
+    let hours = 0;
+    if (itemIds && !itemIds.length) return { days: 0, byItem };
     if (itemIds && itemIds.length <= 50) {
       const keys = itemIds.map((id) => `'$."${id}"'`);
-      const { results } = await this.db.prepare(`SELECT ${keys.map((k, i) => `json_extract(body, ${k}) AS i${i}`).join(", ")} FROM sales WHERE house_id = ? AND day >= ?`).bind(houseId, since).all<Record<string, string | null>>();
-      n = results.length;
-      for (const r of results) itemIds.forEach((id, i) => { const v = r[`i${i}`]; if (v) add(byItem, id, JSON.parse(v) as SaleRow); });
+      const { results } = await this.db.prepare(`SELECT json_extract(body, '$._hours') AS hours, ${keys.map((k, i) => `json_extract(body, ${k}) AS i${i}`).join(", ")} FROM sales WHERE house_id = ? AND day >= ?`).bind(houseId, since).all<Record<string, string | number | null>>();
+      for (const r of results) {
+        hours += Number(r.hours) || 0;
+        itemIds.forEach((id, i) => { const v = r[`i${i}`]; if (typeof v === "string") add(byItem, id, JSON.parse(v) as SaleRow); });
+      }
     } else {
       const { results } = await this.db.prepare("SELECT body FROM sales WHERE house_id = ? AND day >= ?").bind(houseId, since).all<{ body: string }>();
-      n = results.length;
-      for (const r of results) for (const [id, v] of Object.entries(JSON.parse(r.body) as Record<string, SaleRow>)) add(byItem, Number(id), v);
+      for (const r of results) {
+        for (const [id, v] of Object.entries(JSON.parse(r.body) as Record<string, SaleRow | number>)) {
+          if (id === "_hours") hours += Number(v) || 0;
+          else if (!itemIds || itemIds.includes(Number(id))) add(byItem, Number(id), v as SaleRow);
+        }
+      }
     }
-    return { days: n, byItem };
+    return { days: Math.round((hours / 24) * 100) / 100, byItem };
   }
 
   /** First and last saved day, and how many days have sales counts. */
@@ -207,12 +224,17 @@ export function toPoints(day: string, h: string): Point[] {
  * gone with under 2 hours left = ended near expiry, sold or not. New ids = posted.
  */
 export function diffAuctions(prev: Prev, now: Prev): Record<string, SaleRow> {
-  const still = new Set(now.a.map((a) => a[0]));
+  const still = new Map(now.a.map((a) => [a[0], a[2]]));
   const before = new Set(prev.a.map((a) => a[0]));
   const out: Record<string, SaleRow> = {};
   const row = (item: number) => (out[item] ??= [0, 0, 0, 0, 0]);
   for (const [id, item, qty, unit, left] of prev.a) {
-    if (still.has(id)) continue;
+    const qtyNow = still.get(id);
+    if (qtyNow !== undefined) {
+      // A stack that got smaller was partly bought.
+      if (qtyNow < qty) { const r = row(item); r[0] += qty - qtyNow; r[4] += (qty - qtyNow) * unit; }
+      continue;
+    }
     const r = row(item);
     if (left >= 2) { r[0] += qty; r[1] += 1; r[4] += qty * unit; } else r[2] += 1;
   }
