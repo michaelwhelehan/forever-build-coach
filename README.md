@@ -44,6 +44,9 @@ people "know" is really Classic 1.12 carried over.
 | `market_price` | Live auction prices (Blizzard API, read hourly) for your faction's house, and what you'd net | Battle.net key |
 | `auction_houses` | Every Forever auction house, its faction and group, and one item's price across all of them | Battle.net key |
 | `gold_opportunities` | Money makers found on your house a few times a day: dips under the 7-day average, price spikes, greens worth disenchanting, ranked by Claude Haiku under a daily spending cap | Battle.net key, D1, optional Anthropic key |
+| `price_history` | Hourly prices for trade goods (dyes included) and potions on your house, 60 days: typical price by hour and weekday, below-usual now, sales per day. `category` takes a kind, `potions` or a name word like `dye` | Battle.net key, D1 |
+| `crafting_profit` | Profit per craft and per day: reagent cost at live prices against what the result sells for and how fast it sells. Common alchemy recipes built in | Battle.net key, D1 for sales |
+| `crafting_recipe` | Save, correct or remove a recipe for `crafting_profit` (e.g. the new Forever dyes), shared by everyone on the server | D1 |
 | `farm_value` | Gold per hour from a farm | |
 | `profession_cost` | Cheapest known path to level a profession, with total cost | |
 | `confidence_score` | Score a claim with the shared rules | |
@@ -142,7 +145,7 @@ the maths-only list.
 
 The same setup also keeps a finer price history for the watched houses (`price_history`):
 
-- **Trade goods hourly, 60 days.** Every time the cron reads the house (about hourly), each trade good's
+- **Trade goods and potions hourly, 60 days.** Every time the cron reads the house (about hourly), each trade good's (and each potion's, elixir's, flask's and oil's)
   lowest, market price, units and listings go into the `hourly` table, one row per item per UTC day with
   the day's hours as JSON. That's about one row written per item per hour, plus one deleted per item per
   day, well inside D1's free 100k rows written a day.
@@ -150,6 +153,20 @@ The same setup also keeps a finer price history for the watched houses (`price_h
   auction that vanished with 2+ hours left counts as bought, one that vanished near expiry as ended, and
   new ones as posted. Cancellations look like sales, so it's an upper bound. The counts go into the
   `sales` table, one row per house per day. Needs the KV namespace, and Blizzard's auction ids.
+- **Everything else, 4-hourly for 8 days**, from the gold finder's `prices` table: `price_history` falls
+  back to it for items without hourly rows.
+
+### Crafting profit
+
+`crafting_profit` prices each recipe's reagents at the house's live market price (vendor vials at the
+vendor price, intermediates like Blackmouth Oil at the cheaper of buying or crafting), compares that with
+the cheapest listing of the result (or its 7-day typical price when none is listed), takes off the 5% cut,
+and multiplies by the estimated sales a day and your share of them (default a quarter).
+
+The built-in recipes in `src/sources/recipes.ts` are the common alchemy ones. Their reagents are Classic
+1.12 except where ForeverDB's Forever route shows otherwise, so answers mark them as a baseline. Players
+fix or add recipes with `crafting_recipe`, saved in the D1 `recipes` table; a saved recipe replaces the
+built-in one for the same item.
 
 1. `npx wrangler d1 create forever-build-coach`, then uncomment the `[[d1_databases]]` block in
    `wrangler.toml` and paste the id.

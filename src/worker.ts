@@ -9,6 +9,7 @@ import { Blizzard, type Region } from "./sources/blizzard.js";
 import { AuctionPrices } from "./sources/auctions.js";
 import { GoldFinder, goldSettingsFrom, type D1Like } from "./sources/gold.js";
 import { PriceHistory } from "./sources/price-history.js";
+import { RecipeBook } from "./sources/recipes.js";
 import Anthropic from "@anthropic-ai/sdk";
 import type { KvLike } from "./cache.js";
 
@@ -67,6 +68,8 @@ export function depsFor(env: Env): Deps {
       },
     };
     cached.deps.auctions = new AuctionPrices(cached.deps.blizzard, env.CACHE);
+    // Built-in recipes, plus the ones players save (needs D1).
+    cached.deps.recipes = new RecipeBook(env.DB);
     const gold = goldSettingsFrom(env);
     if (env.DB && gold) {
       const catalog = cached.deps.catalog;
