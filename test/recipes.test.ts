@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { BUILT_IN, RecipeBook, reagentCost, profitRow, VENDOR, type Recipe } from "../src/sources/recipes.js";
+import { BUILT_IN, TAILORING, RecipeBook, reagentCost, profitRow, VENDOR, type Recipe } from "../src/sources/recipes.js";
 import { PriceHistory, historyKind, matchesCategory } from "../src/sources/price-history.js";
 import { createServer, type Deps } from "../src/server.js";
 import type { D1Like, D1Stmt } from "../src/sources/gold.js";
@@ -19,12 +19,13 @@ function fakeD1(): D1Like & { sql: DatabaseSync } {
   return { sql, prepare: (q) => stmt(q), batch: async (s) => { for (const x of s) await x.run(); return []; } };
 }
 
-const book = new Map(BUILT_IN.map((r) => [r.itemId, r] as [number, Recipe]));
+const book = new Map([...BUILT_IN, ...TAILORING].map((r) => [r.itemId, r] as [number, Recipe]));
 
 describe("recipe maths", () => {
   it("built-in recipes have unique outputs and only positive quantities", () => {
-    expect(new Set(BUILT_IN.map((r) => r.itemId)).size).toBe(BUILT_IN.length);
-    for (const r of BUILT_IN) for (const g of r.reagents) expect(g.qty).toBeGreaterThan(0);
+    const all = [...BUILT_IN, ...TAILORING];
+    expect(new Set(all.map((r) => r.itemId)).size).toBe(all.length);
+    for (const r of all) for (const g of r.reagents) expect(g.qty).toBeGreaterThan(0);
   });
 
   it("prices vendor vials at the vendor price unless the auction house is cheaper", () => {
@@ -42,6 +43,14 @@ describe("recipe maths", () => {
     const oil = c.lines.find((l) => l.itemId === 6370)!;
     expect(oil.how).toBe("crafted");
     expect(oil.unit).toBe(2 * 20 + 4);
+  });
+
+  it("prices tailoring with bolts bought or woven, whichever is cheaper, and vendor thread", () => {
+    const belt = book.get(7026)!; // Bolt of Linen Cloth + Coarse Thread
+    const c = reagentCost(belt, (id) => ({ 2589: 25, 2996: 60, 2320: 12 } as Record<number, number>)[id], book);
+    expect(c.lines.find((l) => l.itemId === 2996)).toMatchObject({ how: "crafted", unit: 50 });
+    expect(c.lines.find((l) => l.itemId === 2320)).toMatchObject({ how: "vendor", unit: 10 });
+    expect(c.copper).toBe(60);
   });
 
   it("uses your own reagent prices and reports missing ones", () => {

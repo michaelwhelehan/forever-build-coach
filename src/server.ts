@@ -900,9 +900,9 @@ export function createServer(deps: Deps): McpServer {
 
   server.registerTool("crafting_profit", {
     title: "Crafting profit",
-    description: "What crafting earns on the auction house: for each recipe, the reagent cost at live auction prices (vendor vials at vendor price; intermediates like Blackmouth Oil at the cheaper of buying or crafting), what the result sells for, profit per craft after the 5% cut, how many sell a day and profit per day. Covers the common alchemy potions and elixirs built in, plus any recipe players saved with crafting_recipe (the new Forever dyes need saving once). Filter with category ('potions', 'dyes'), names or itemIds. Give ownPrices for reagents you gather yourself (0 = free, or what you could sell them for).",
+    description: "What crafting earns on the auction house: for each recipe, the reagent cost at live auction prices (vendor vials at vendor price; intermediates like Blackmouth Oil at the cheaper of buying or crafting), what the result sells for, profit per craft after the 5% cut, how many sell a day and profit per day. Covers the common alchemy potions and elixirs and tailoring (cloth bolts, bags and the levelling route's items) built in, plus any recipe players saved with crafting_recipe (the new Forever dyes need saving once). Filter with category ('potions', 'dyes'), names or itemIds. Give ownPrices for reagents you gather yourself (0 = free, or what you could sell them for).",
     inputSchema: {
-      category: z.string().optional().describe("'potions' (potions, elixirs, flasks, oils), 'dyes', a profession such as 'alchemy', or words in recipe names."),
+      category: z.string().optional().describe("'potions' (potions, elixirs, flasks, oils), 'dyes', a profession ('alchemy', 'tailoring'), or words in recipe names (e.g. 'bolt', 'bag')."),
       itemIds: z.array(z.number().int().positive()).max(25).optional().describe("Only these crafted items."),
       ownPrices: z.record(z.string(), z.number().min(0)).optional().describe("Your own price per reagent in copper, by item id, e.g. {\"3821\": 0} for Goldthorn you pick yourself."),
       shareOfSales: z.number().min(0.01).max(1).default(0.25).describe("Share of the item's daily sales you expect to win, for profit per day. Default a quarter."),
