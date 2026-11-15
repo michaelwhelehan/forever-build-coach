@@ -38,6 +38,40 @@ export const TRADE_GOODS: Record<number, string> = {
   7: "Metal & Stone", 8: "Meat", 9: "Herb", 10: "Elemental", 11: "Other", 12: "Enchanting",
 };
 
+/** Consumable subclasses saved hourly (ForeverDB numbers them like later clients: 1 potion, 2 elixir, 3 flask, 6 item enhancement). */
+const CONSUMABLES: Record<number, string> = { 1: "Potion", 2: "Elixir", 3: "Flask", 6: "Item Enhancement" };
+
+/**
+ * Which items get hourly prices: every trade good (class 7: cloth, herbs, dyes...) and the potion-type
+ * consumables alchemists sell. Consumables in subclass 0 count when their name says potion, elixir, etc.
+ */
+export function historyKind(info: { n: string; c: number; sc: number }): string | undefined {
+  if (info.c === 7) return TRADE_GOODS[info.sc] ?? "Trade Goods";
+  if (info.c !== 0) return undefined;
+  if (CONSUMABLES[info.sc]) return CONSUMABLES[info.sc];
+  if (/\bflask\b/i.test(info.n)) return "Flask";
+  if (/\belixir\b/i.test(info.n)) return "Elixir";
+  if (/\b(potion|draught)\b/i.test(info.n)) return "Potion";
+  if (/\boil\b/i.test(info.n)) return "Item Enhancement";
+  return undefined;
+}
+
+/**
+ * Does an item match a category filter. Besides the kinds above, "potions" means potions, elixirs and
+ * flasks, and "dyes" (or any other word) matches item names.
+ */
+export function matchesCategory(want: string, kind: string | undefined, name: string): boolean {
+  const w = want.toLowerCase().trim().replace(/s$/, "");
+  if (!w) return true;
+  const k = (kind ?? "").toLowerCase();
+  if (w === "potion" || w === "alchemy" || w === "consumable") return ["potion", "elixir", "flask", "item enhancement"].includes(k);
+  if (k.includes(w)) return true;
+  // A known kind (Cloth, Herb...) matches by kind only, so "cloth" doesn't pull in Cloth Gloves.
+  const kinds = [...Object.values(TRADE_GOODS), ...Object.values(CONSUMABLES)].map((x) => x.toLowerCase());
+  if (kinds.some((x) => x.includes(w))) return false;
+  return name.toLowerCase().includes(w);
+}
+
 /** One auction as Blizzard lists it; `id` and `time_left` are what sales tracking needs. */
 export type { RawAuction } from "./auctions.js";
 
@@ -86,13 +120,19 @@ export class PriceHistory {
     return info && info.c === 7 ? (TRADE_GOODS[info.sc] ?? "Trade Goods") : undefined;
   }
 
+  /** Which kind of saved item this is (a trade good or a potion-type consumable), or undefined if it isn't saved hourly. */
+  async kind(id: number): Promise<string | undefined> {
+    const info = await this.itemClass?.(id).catch(() => undefined);
+    return info ? historyKind(info) : undefined;
+  }
+
   async saveHourly(snap: HouseSnapshot) {
     await this.init();
     if (!this.itemClass) return;
     const t = Date.parse(snap.scannedAt);
     const day = utcDay(t), hour = String(new Date(t).getUTCHours());
     const entries = Object.entries(snap.items);
-    const kinds = await Promise.all(entries.map(([id]) => this.tradeGood(Number(id))));
+    const kinds = await Promise.all(entries.map(([id]) => this.kind(Number(id))));
     const rows: [number, string][] = entries.flatMap(([id, row], i) => (kinds[i] ? [[Number(id), JSON.stringify({ [hour]: row })] as [number, string]] : []));
     // D1 allows 100 bound values per statement: 4 columns, 25 rows each.
     const stmts: D1Stmt[] = [];
@@ -146,11 +186,32 @@ export class PriceHistory {
     ]);
   }
 
-  /** Every saved hour of one item, oldest first. */
+  /** Every saved hour of one item, oldest first. Items not saved hourly fall back to the gold finder's 4-hourly copy. */
   async points(houseId: number, itemId: number, days: number, now = Date.now()): Promise<Point[]> {
     await this.init();
     const { results } = await this.db.prepare("SELECT day, h FROM hourly WHERE house_id = ? AND item_id = ? AND day >= ? ORDER BY day").bind(houseId, itemId, utcDay(now - days * 86400_000)).all<{ day: string; h: string }>();
-    return results.flatMap((r) => toPoints(r.day, r.h)).sort((a, b) => a.at - b.at);
+    const pts = results.flatMap((r) => toPoints(r.day, r.h)).sort((a, b) => a.at - b.at);
+    return pts.length ? pts : ((await this.snapshotPoints(houseId, [itemId], days, now)).get(itemId) ?? []);
+  }
+
+  /**
+   * The gold finder's copy of every item (table "prices": every 4 hours, kept 8 days), for items the
+   * hourly table doesn't hold or hasn't held for long. Empty when the gold finder isn't running.
+   */
+  async snapshotPoints(houseId: number, itemIds: number[], days: number, now = Date.now()): Promise<Map<number, Point[]>> {
+    const out = new Map<number, Point[]>();
+    const since = Math.floor((now - days * 86400_000) / 1000);
+    for (let i = 0; i < itemIds.length; i += 90) {
+      const ids = itemIds.slice(i, i + 90);
+      const rows = await this.db.prepare(`SELECT item_id, at, min, market, units FROM prices WHERE house_id = ? AND at >= ? AND item_id IN (${ids.map(() => "?").join(", ")}) ORDER BY at`)
+        .bind(houseId, since, ...ids).all<{ item_id: number; at: number; min: number; market: number; units: number }>().catch(() => ({ results: [] as { item_id: number; at: number; min: number; market: number; units: number }[] }));
+      for (const r of rows.results) {
+        let arr = out.get(r.item_id);
+        if (!arr) out.set(r.item_id, (arr = []));
+        arr.push({ at: r.at * 1000, lowest: r.min, market: r.market, units: r.units, listings: 0 });
+      }
+    }
+    return out;
   }
 
   /** Every tracked trade good's saved hours, grouped by item. */

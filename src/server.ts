@@ -16,9 +16,10 @@ import * as xp from "./formulas/xp.js";
 import { netAfterCut, formatCopper, AH_CUT } from "./formulas/gold.js";
 import { AuctionPrices, GROUP_RULESETS, type Faction, type HouseInfo } from "./sources/auctions.js";
 import type { GoldFinder } from "./sources/gold.js";
-import { profile, belowUsual, sellThrough, type PriceHistory } from "./sources/price-history.js";
+import { profile, belowUsual, sellThrough, matchesCategory, median, type PriceHistory } from "./sources/price-history.js";
+import { RecipeBook, reagentCost, profitRow, isPotionName, isDyeName, VENDOR, type Recipe } from "./sources/recipes.js";
 
-export const VERSION = "0.6.0";
+export const VERSION = "0.7.0";
 
 const CLASSES = ["warrior", "paladin", "hunter", "rogue", "priest", "shaman", "mage", "warlock", "druid"] as const;
 const classEnum = z.enum(CLASSES);
@@ -35,7 +36,7 @@ Rules for every answer (full text: kb_guide topic "rules"):
 
 Good starting points: character_lookup (if the player gives name + surname), gear_upgrades (the in-game addon's FBC1 line, or character_lookup's gear), find_items, levelling_guide ("what next", "which talent"), profession_guide (what to craft next), gold_guide, talent_tree, levelling_plan, profession_cost. Use the optimize_build prompt for a full review.`;
 
-export interface Deps { everloot: Everloot; foreverdb: ForeverDb; foreverdbSite?: ForeverDbSite; catalog?: ItemCatalog; guides?: Guides; blizzard: Blizzard; browser?: BrowserWorker; auctions?: AuctionPrices; gold?: GoldFinder; history?: PriceHistory }
+export interface Deps { everloot: Everloot; foreverdb: ForeverDb; foreverdbSite?: ForeverDbSite; catalog?: ItemCatalog; guides?: Guides; blizzard: Blizzard; browser?: BrowserWorker; auctions?: AuctionPrices; gold?: GoldFinder; history?: PriceHistory; recipes?: RecipeBook }
 
 type Src = { id: string; name: string; url: string; credit?: string };
 
@@ -827,10 +828,10 @@ export function createServer(deps: Deps): McpServer {
 
   server.registerTool("price_history", {
     title: "Price history and sell-through",
-    description: "Hourly auction prices for trade goods (cloth, leather, herbs, ore, enchanting mats, elementals...) on the server's watched house, kept 60 days, plus how well items sell. With itemId: every saved hour, the typical price by hour of day and weekday (UTC), the lowest listing now against the 7-day median, and sales per day. Without itemId: one row per trade good with its cheapest and dearest hour, swing, how far under its usual price it is now, and sales per day; filter with category. Sales are estimated for every item, not just trade goods, from auctions that vanish between reads while they still had hours left (cancellations count too).",
+    description: "Hourly auction prices for trade goods (cloth, leather, herbs, ore, enchanting mats, elementals, dyes...) and potions, elixirs, flasks and oils on the server's watched house, kept 60 days, plus how well items sell. With itemId: every saved hour, the typical price by hour of day and weekday (UTC), the lowest listing now against the 7-day median, and sales per day. Without itemId: one row per item with its cheapest and dearest hour, swing, how far under its usual price it is now, and sales per day; filter with category, e.g. 'potions' (all potions, elixirs and flasks), 'dyes', 'Herb'. Other items fall back to a 4-hourly copy kept 8 days. Sales are estimated for every item from auctions that vanish between reads while they still had hours left (cancellations count too).",
     inputSchema: {
       itemId: z.number().int().positive().optional(),
-      category: z.string().optional().describe("Trade goods kind, e.g. Herb, Cloth, Leather, Metal & Stone, Enchanting, Elemental, Meat."),
+      category: z.string().optional().describe("A kind (Herb, Cloth, Leather, Metal & Stone, Enchanting, Elemental, Meat, Potion, Elixir, Flask), 'potions' for all of potions, elixirs and flasks, or any word in item names, e.g. 'dye'."),
       days: z.number().int().min(1).max(60).default(14),
       houseId: z.number().int().positive().optional().describe("Defaults to the first watched house."),
     },
@@ -854,28 +855,35 @@ export function createServer(deps: Deps): McpServer {
       const last = points[points.length - 1];
       const listedNow = Boolean(last && now - last.at < 3 * 3600_000);
       return reply({
-        houseId: id, itemId, item: info?.n, url: itemUrl(itemId), category: await h.tradeGood(itemId), days, coverage,
+        houseId: id, itemId, item: info?.n, url: itemUrl(itemId), category: await h.kind(itemId), days, coverage,
         profile: profile(points),
         listedNow,
         latest: last ? { at: new Date(last.at).toISOString(), lowest: last.lowest, market: last.market, units: last.units, ...(listedNow ? belowUsual(points, last.lowest, now) : {}) } : undefined,
         sales: sellThrough(sales.byItem.get(itemId), sales.days),
         points: points.map((p) => ({ at: new Date(p.at).toISOString(), lowest: p.lowest, market: p.market, units: p.units, listings: p.listings })),
-        ...(points.length ? {} : { note: "No hourly prices for this item. Only trade goods are saved hourly; sales are still tracked for every item." }),
+        ...(points.length ? {} : { note: "No saved prices for this item. Trade goods and potions are saved hourly, everything else every 4 hours for 8 days; sales are still tracked for every item." }),
         confidence: single({ tier: "official", ageDays: last ? (now - last.at) / 86_400_000 : undefined, note: "Blizzard listings; sales are an estimate" }),
         sources: credit, notes,
       });
     }
     const [all, sales] = await Promise.all([h.allPoints(id, days, now), h.sales(id, Math.min(days, 60), undefined, now)]);
-    const want = category?.toLowerCase().trim();
+    const want = category?.trim();
+    const nameOf = async (iid: number) => (await deps.catalog?.get(iid).catch(() => undefined))?.n ?? `Item ${iid}`;
+    if (want) {
+      // Items with sales but no hourly rows yet (e.g. potions before they were saved hourly): use the 4-hourly copy.
+      const extra: number[] = [];
+      for (const iid of sales.byItem.keys()) if (!all.has(iid) && matchesCategory(want, await h.kind(iid), await nameOf(iid))) extra.push(iid);
+      for (const [iid, pts] of await h.snapshotPoints(id, extra.slice(0, 400), Math.min(days, 8), now)) all.set(iid, pts);
+    }
     const items = [];
     for (const [iid, pts] of all) {
-      const cat = await h.tradeGood(iid);
-      if (want && !(cat ?? "").toLowerCase().includes(want)) continue;
+      const cat = await h.kind(iid);
+      if (want && !matchesCategory(want, cat, await nameOf(iid))) continue;
       const pr = profile(pts), last = pts[pts.length - 1], st = sellThrough(sales.byItem.get(iid), sales.days);
       const listed = Boolean(last && now - last.at < 3 * 3600_000);
       const hourPrice = (hr?: number) => pr.byHourUtc.find((x) => x.hour === hr)?.market;
       items.push({
-        itemId: iid, item: (await deps.catalog?.get(iid).catch(() => undefined))?.n ?? `Item ${iid}`, category: cat ?? "Trade Goods",
+        itemId: iid, item: await nameOf(iid), url: itemUrl(iid), category: cat ?? "Other",
         typical: pr.typical, cheapestHourUtc: pr.cheapestHourUtc, cheapPrice: hourPrice(pr.cheapestHourUtc), dearestHourUtc: pr.dearestHourUtc, dearPrice: hourPrice(pr.dearestHourUtc), swingPct: pr.swingPct,
         lowestNow: listed ? last.lowest : undefined, unitsNow: listed ? last.units : 0, pctOfUsual: listed ? belowUsual(pts, last.lowest, now).pctOfUsual : undefined,
         soldUnitsPerDay: st.soldUnitsPerDay, sellRatePct: st.sellRatePct, samples: pr.samples, daysOfData: pr.days,
@@ -888,6 +896,117 @@ export function createServer(deps: Deps): McpServer {
       items,
       sources: credit, notes,
     });
+  }));
+
+  server.registerTool("crafting_profit", {
+    title: "Crafting profit",
+    description: "What crafting earns on the auction house: for each recipe, the reagent cost at live auction prices (vendor vials at vendor price; intermediates like Blackmouth Oil at the cheaper of buying or crafting), what the result sells for, profit per craft after the 5% cut, how many sell a day and profit per day. Covers the common alchemy potions and elixirs built in, plus any recipe players saved with crafting_recipe (the new Forever dyes need saving once). Filter with category ('potions', 'dyes'), names or itemIds. Give ownPrices for reagents you gather yourself (0 = free, or what you could sell them for).",
+    inputSchema: {
+      category: z.string().optional().describe("'potions' (potions, elixirs, flasks, oils), 'dyes', a profession such as 'alchemy', or words in recipe names."),
+      itemIds: z.array(z.number().int().positive()).max(25).optional().describe("Only these crafted items."),
+      ownPrices: z.record(z.string(), z.number().min(0)).optional().describe("Your own price per reagent in copper, by item id, e.g. {\"3821\": 0} for Goldthorn you pick yourself."),
+      shareOfSales: z.number().min(0.01).max(1).default(0.25).describe("Share of the item's daily sales you expect to win, for profit per day. Default a quarter."),
+      days: z.number().int().min(1).max(60).default(7).describe("Days of history for typical price and sales."),
+      houseId: z.number().int().positive().optional().describe("Defaults to the first watched house."),
+      includeLosses: z.boolean().default(true),
+      limit: z.number().int().min(1).max(60).default(30),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: true },
+  }, safe(async ({ category, itemIds, ownPrices, shareOfSales, days, houseId, includeLosses, limit }) => {
+    const h = deps.history, ah = deps.auctions;
+    if (!ah?.enabled) return reply({ error: "Live auction prices aren't set up on this server (Blizzard API keys)." });
+    const book = deps.recipes ?? new RecipeBook();
+    const recipes = await book.all();
+    const byId = new Map(recipes.map((r) => [r.itemId, r] as [number, Recipe]));
+    const want = category?.toLowerCase().trim().replace(/s$/, "");
+    const chosen = recipes.filter((r) => {
+      if (itemIds?.length) return itemIds.includes(r.itemId);
+      if (!want) return true;
+      if (want === "potion") return isPotionName(r.name);
+      if (want === "dye") return isDyeName(r.name);
+      return r.profession.toLowerCase().includes(want) || r.name.toLowerCase().includes(want);
+    });
+    const region = (deps.gold?.settingsView.region ?? "eu") as "eu";
+    const id = houseId ?? h?.watched[0] ?? 114;
+    const snap = await ah.snapshot(region, id);
+    const now = Date.now();
+    const listed = (iid: number) => snap.items[String(iid)];
+    const marketOf = (iid: number) => listed(iid)?.[1];
+    const own = Object.fromEntries(Object.entries(ownPrices ?? {}).map(([k, v]) => [Number(k), v]));
+    const outIds = chosen.map((r) => r.itemId);
+    const sales = h ? await h.sales(id, days, outIds, now).catch(() => undefined) : undefined;
+    const rows = [];
+    for (const r of chosen) {
+      const cost = reagentCost(r, marketOf, byId, own);
+      const pts = h ? await h.points(id, r.itemId, days, now).catch(() => []) : [];
+      const typical = median(pts.filter((p) => p.at >= now - days * 86400_000).map((p) => p.market));
+      const lowNow = listed(r.itemId)?.[0];
+      // What you'd list at: just under the cheapest listing now; if nothing is listed, the typical price.
+      const sell = own[r.itemId] !== undefined ? { copper: own[r.itemId], from: "yours" as const } : lowNow !== undefined ? { copper: lowNow, from: "listed now" as const } : typical !== undefined ? { copper: Math.round(typical), from: "7-day typical" as const } : {};
+      const st = sales && sales.days >= 0.5 ? sellThrough(sales.byItem.get(r.itemId), sales.days) : undefined;
+      const row = profitRow(r, cost, sell, st?.soldUnitsPerDay, shareOfSales, AH_CUT, listed(r.itemId)?.[2] ?? 0);
+      rows.push({
+        ...row, url: itemUrl(r.itemId),
+        cost: formatCopper(row.cost ?? null), sellAt: formatCopper(row.sellPrice ?? null), profitPerCraft: formatCopper(row.profit ?? null), profitPerDayEst: formatCopper(row.profitPerDay ?? null),
+        profitCopper: row.profit, profitPerDayCopper: row.profitPerDay, typical7d: typical !== undefined ? formatCopper(Math.round(typical)) : undefined,
+        sellRatePct: st?.sellRatePct, unitsListedNow: row.listedNow,
+        reagents: cost.lines.map((l) => ({ ...l, url: itemUrl(l.itemId), unit: l.unit !== undefined ? formatCopper(l.unit) : "not listed", ...(l.how ? { priced: l.how } : {}) })),
+        ...(r.note ? { recipeNote: r.note } : {}),
+      });
+    }
+    const shown = rows.filter((x) => includeLosses || (x.profitCopper ?? -1) > 0)
+      .sort((a, b) => (b.profitPerDayCopper ?? (b.profitCopper ?? -1e9) / 1000) - (a.profitPerDayCopper ?? (a.profitCopper ?? -1e9) / 1000))
+      .slice(0, limit)
+      .map(({ sellPrice: _s, profit: _p, profitPerDay: _d, listedNow: _l, ...rest }) => rest);
+    const asked = want === "dye" && !chosen.length;
+    return reply({
+      houseId: id, scannedAt: snap.scannedAt, salesDays: sales?.days ?? 0, shareOfSales, recipes: shown,
+      ...(asked ? { missingRecipes: "No dye recipes saved yet. Save one with crafting_recipe (crafted item id and reagents), e.g. Cerulean Dye 249409, Magenta Dye 249430, Viridian Dye 249431." } : {}),
+      confidence: derived([
+        { tier: "official", ageDays: (now - Date.parse(snap.scannedAt)) / 86_400_000, note: "live Blizzard listings" },
+        { tier: chosen.some((r) => r.from === "classic") ? "classic_baseline" : chosen.some((r) => r.from === "player") ? "user_provided" : "game_files", note: "recipe reagents" },
+      ], "crafting profit formula"),
+      sources: [{ ...sourceRef("blizzard"), credit: BLIZZARD_CREDIT }, foreverdbSrc()],
+      notes: [
+        "Profit per craft = sell price x 0.95 (auction cut) - reagent cost. Deposits aren't counted. Prices in copper where a field ends in Copper.",
+        "Sell price = the cheapest listing now (what you'd have to match), or the 7-day typical price when none is listed. Reagents at market price (average of the cheapest 15% listed).",
+        `Profit per day = profit per craft x units the market sells a day x ${shareOfSales} (your share). Sales are estimated from auctions vanishing with time left, so they run high; empty until half a day of reads is counted.`,
+        "recipeFrom 'classic' = Classic 1.12 reagents, unconfirmed for Forever (several elixirs were renamed and may have changed). 'forever' = seen in ForeverDB's Forever data. 'player' = saved by a player. If the game shows different reagents, save the right ones with crafting_recipe.",
+        `Vendor reagents: ${Object.values(VENDOR).map((v) => `${v.name} ${formatCopper(v.copper)}`).join(", ")}.`,
+      ],
+    });
+  }));
+
+  server.registerTool("crafting_recipe", {
+    title: "Save a crafting recipe",
+    description: "Add, correct or remove a recipe used by crafting_profit, shared by everyone on this server. Use it for recipes the server doesn't know (the new Forever dyes) or when the game shows different reagents from the built-in ones. action 'list' shows every recipe.",
+    inputSchema: {
+      action: z.enum(["save", "remove", "list"]).default("save"),
+      itemId: z.number().int().positive().optional().describe("The crafted item (see find_items)."),
+      profession: z.string().default("alchemy"),
+      makes: z.number().int().min(1).max(20).default(1).describe("How many one craft makes."),
+      skill: z.number().int().min(1).max(300).optional(),
+      reagents: z.array(z.object({ itemId: z.number().int().positive(), qty: z.number().int().min(1).max(50) })).max(8).optional(),
+      note: z.string().max(200).optional(),
+    },
+    annotations: { readOnlyHint: false, openWorldHint: false },
+  }, safe(async ({ action, itemId, profession, makes, skill, reagents, note }) => {
+    const book = deps.recipes ?? new RecipeBook();
+    if (action === "list") {
+      const all = await book.all();
+      return reply({ recipes: all.map((r) => ({ itemId: r.itemId, name: r.name, url: itemUrl(r.itemId), profession: r.profession, makes: r.makes ?? 1, from: r.from, reagents: r.reagents.map((x) => `${x.qty} ${x.name}`).join(", ") })) });
+    }
+    if (!itemId) return fail("Give the crafted item's itemId.");
+    if (action === "remove") return reply({ removed: await book.remove(itemId), note: "Only saved recipes can be removed; a built-in one comes back." });
+    if (!reagents?.length) return fail("Give the reagents (itemId and qty for each).");
+    if (!book.canSave) return fail("Saving recipes needs the server's D1 database.");
+    const nameOf = async (iid: number) => (await deps.catalog?.get(iid).catch(() => undefined))?.n;
+    const name = await nameOf(itemId);
+    if (deps.catalog && !name) return fail(`Item ${itemId} isn't in ForeverDB's item list.`);
+    const rs = await Promise.all(reagents.map(async (r) => ({ itemId: r.itemId, name: (await nameOf(r.itemId)) ?? `Item ${r.itemId}`, qty: r.qty })));
+    const recipe: Recipe = { itemId, name: name ?? `Item ${itemId}`, profession: profession.toLowerCase(), skill, makes, reagents: rs, from: "player", ...(note ? { note } : {}) };
+    await book.save(recipe);
+    return reply({ saved: { ...recipe, url: itemUrl(itemId) }, next: "crafting_profit now uses it." });
   }));
 
   server.registerTool("farm_value", {
