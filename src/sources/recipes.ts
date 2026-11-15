@@ -39,6 +39,10 @@ export const VENDOR: Record<number, { name: string; copper: number }> = {
   2604: { name: "Red Dye", copper: 50 },
   6260: { name: "Blue Dye", copper: 50 },
   6261: { name: "Orange Dye", copper: 1000 },
+  // Enchanting, mining and blacksmithing (Classic 1.12 vendor prices; Forever may differ).
+  4470: { name: "Simple Wood", copper: 38 },
+  11291: { name: "Star Wood", copper: 4500 },
+  3857: { name: "Coal", copper: 500 },
 };
 
 const R = (itemId: number, name: string, qty = 1): Reagent => ({ itemId, name, qty });
@@ -127,6 +131,74 @@ export const TAILORING: Recipe[] = [
   T(14139, "Mooncloth Shoulders", 290, [x(B_RUNE, 5), x(R(14342, "Mooncloth"), 5), RUNE_THREAD]),
 ];
 
+const ORE = { copper: R(2770, "Copper Ore"), tin: R(2771, "Tin Ore"), silver: R(2775, "Silver Ore"), iron: R(2772, "Iron Ore"), gold: R(2776, "Gold Ore"), mithril: R(3858, "Mithril Ore"), truesilver: R(7911, "Truesilver Ore"), thorium: R(10620, "Thorium Ore") };
+const BAR = { copper: R(2840, "Copper Bar"), tin: R(3576, "Tin Bar"), bronze: R(2841, "Bronze Bar"), silver: R(2842, "Silver Bar"), iron: R(3575, "Iron Bar"), gold: R(3577, "Gold Bar"), steel: R(3859, "Steel Bar"), mithril: R(3860, "Mithril Bar"), truesilver: R(6037, "Truesilver Bar"), thorium: R(12359, "Thorium Bar") };
+const STONE = { rough: R(2835, "Rough Stone"), coarse: R(2836, "Coarse Stone"), heavy: R(2838, "Heavy Stone"), solid: R(7912, "Solid Stone"), dense: R(12365, "Dense Stone") };
+const GRIND = { rough: R(3470, "Rough Grinding Stone"), coarse: R(3478, "Coarse Grinding Stone"), heavy: R(3486, "Heavy Grinding Stone") };
+
+const P = (profession: string) => (itemId: number, name: string, skill: number, reagents: Reagent[], makes?: number, note?: string): Recipe =>
+  ({ itemId, name, profession, skill, reagents, from: "classic", ...(makes ? { makes } : {}), ...(note ? { note } : {}) });
+const M = P("mining"), E = P("enchanting"), BS = P("blacksmithing");
+
+/** Mining: smelting ore into bars (Classic 1.12; checked against house 114's listings on 2026-11-15). */
+export const MINING: Recipe[] = [
+  M(2840, "Copper Bar", 1, [ORE.copper]),
+  M(3576, "Tin Bar", 65, [ORE.tin]),
+  M(2841, "Bronze Bar", 65, [BAR.copper, BAR.tin], 2),
+  M(2842, "Silver Bar", 75, [ORE.silver]),
+  M(3575, "Iron Bar", 125, [ORE.iron]),
+  M(3577, "Gold Bar", 155, [ORE.gold]),
+  M(3859, "Steel Bar", 165, [BAR.iron, R(3857, "Coal")]),
+  M(3860, "Mithril Bar", 175, [ORE.mithril]),
+  M(6037, "Truesilver Bar", 230, [ORE.truesilver]),
+  M(12359, "Thorium Bar", 250, [ORE.thorium]),
+];
+
+/**
+ * Enchanting: what an enchanter can sell. Wands, and turning 3 lesser essences into 1 greater or back
+ * (often the best flip in enchanting). Enchants themselves can't be listed, and runed rods are soulbound.
+ */
+const ESS: [number, string, number, string, number][] = [
+  [10938, "Lesser Magic Essence", 10939, "Greater Magic Essence", 10],
+  [10998, "Lesser Astral Essence", 11082, "Greater Astral Essence", 110],
+  [11134, "Lesser Mystic Essence", 11135, "Greater Mystic Essence", 160],
+  [11174, "Lesser Nether Essence", 11175, "Greater Nether Essence", 210],
+  [16202, "Lesser Eternal Essence", 16203, "Greater Eternal Essence", 260],
+];
+export const ENCHANTING: Recipe[] = [
+  ...ESS.flatMap(([lo, loName, hi, hiName, skill]) => [
+    E(hi, hiName, skill, [R(lo, loName, 3)], undefined, `Made from 3 ${loName}.`),
+    E(lo, loName, skill, [R(hi, hiName)], 3, `3 made by splitting 1 ${hiName}.`),
+  ]),
+  E(11287, "Lesser Magic Wand", 10, [R(4470, "Simple Wood"), R(10938, "Lesser Magic Essence")]),
+  E(11288, "Greater Magic Wand", 70, [R(4470, "Simple Wood"), R(10939, "Greater Magic Essence")]),
+  E(11289, "Greater Mystic Wand", 175, [R(11291, "Star Wood"), R(11135, "Greater Mystic Essence"), R(11137, "Vision Dust")]),
+];
+
+/** Blacksmithing: the stones every melee player buys, rods enchanters need, and a few parts (Classic 1.12). */
+export const BLACKSMITHING: Recipe[] = [
+  BS(2862, "Rough Sharpening Stone", 1, [STONE.rough]),
+  BS(3239, "Rough Weightstone", 1, [STONE.rough, R(2589, "Linen Cloth")]),
+  BS(3470, "Rough Grinding Stone", 25, [x(STONE.rough, 2)]),
+  BS(2863, "Coarse Sharpening Stone", 65, [STONE.coarse]),
+  BS(3240, "Coarse Weightstone", 65, [STONE.coarse, R(2592, "Wool Cloth")]),
+  BS(3478, "Coarse Grinding Stone", 75, [x(STONE.coarse, 2)]),
+  BS(2871, "Heavy Sharpening Stone", 125, [STONE.heavy]),
+  BS(3241, "Heavy Weightstone", 125, [STONE.heavy, R(2592, "Wool Cloth")]),
+  BS(3486, "Heavy Grinding Stone", 125, [x(STONE.heavy, 3)]),
+  BS(7964, "Solid Sharpening Stone", 200, [STONE.solid]),
+  BS(7965, "Solid Weightstone", 200, [STONE.solid, R(4306, "Silk Cloth")]),
+  BS(7966, "Solid Grinding Stone", 200, [x(STONE.solid, 4)]),
+  BS(12404, "Dense Sharpening Stone", 250, [STONE.dense]),
+  BS(12643, "Dense Weightstone", 250, [STONE.dense, R(14047, "Runecloth")]),
+  BS(12644, "Dense Grinding Stone", 250, [x(STONE.dense, 4)]),
+  BS(6338, "Silver Rod", 100, [BAR.silver, x(GRIND.rough, 2)]),
+  BS(11128, "Golden Rod", 150, [BAR.gold, x(GRIND.coarse, 2)]),
+  BS(11144, "Truesilver Rod", 200, [BAR.truesilver, GRIND.heavy]),
+  BS(7071, "Iron Buckle", 150, [BAR.iron]),
+  BS(6042, "Iron Shield Spike", 150, [x(BAR.iron, 6)]),
+];
+
 /** Item ids that count as a "dye" or "potion" group, for filters. */
 export const isPotionName = (n: string) => /potion|elixir|flask|draught|oil\b/i.test(n);
 export const isDyeName = (n: string) => /\bdye\b/i.test(n);
@@ -157,7 +229,7 @@ export class RecipeBook {
   async all(): Promise<Recipe[]> {
     const saved = await this.saved();
     const ids = new Set(saved.map((r) => r.itemId));
-    return [...saved, ...[...BUILT_IN, ...TAILORING].filter((r) => !ids.has(r.itemId))];
+    return [...saved, ...[...BUILT_IN, ...TAILORING, ...MINING, ...ENCHANTING, ...BLACKSMITHING].filter((r) => !ids.has(r.itemId))];
   }
 
   async save(r: Recipe): Promise<void> {
@@ -193,7 +265,7 @@ export function reagentCost(recipe: Recipe, price: (id: number) => number | unde
   const missing: string[] = [];
   let total = 0;
   for (const r of recipe.reagents) {
-    const u = unitPrice(r.itemId, price, book, own, depth);
+    const u = unitPrice(r.itemId, price, book, own, depth, recipe.itemId);
     if (!u) { missing.push(r.name); lines.push({ itemId: r.itemId, name: r.name, qty: r.qty }); continue; }
     total += u.copper * r.qty;
     lines.push({ itemId: r.itemId, name: r.name, qty: r.qty, unit: Math.round(u.copper), how: u.how, total: Math.round(u.copper * r.qty) });
@@ -201,13 +273,15 @@ export function reagentCost(recipe: Recipe, price: (id: number) => number | unde
   return { copper: missing.length ? undefined : Math.round(total / (recipe.makes ?? 1)), lines, missing };
 }
 
-export function unitPrice(id: number, price: (id: number) => number | undefined, book: Map<number, Recipe>, own: Record<number, number> = {}, depth = 0): UnitPrice | undefined {
+/** `making` is the item this reagent goes into: a reagent made from that same item (essences split and joined) is never "crafted". */
+export function unitPrice(id: number, price: (id: number) => number | undefined, book: Map<number, Recipe>, own: Record<number, number> = {}, depth = 0, making?: number): UnitPrice | undefined {
   if (own[id] !== undefined) return { copper: own[id], how: "yours" };
   const options: UnitPrice[] = [];
   const ah = price(id);
   if (ah !== undefined) options.push({ copper: ah, how: "auction" });
   if (VENDOR[id]) options.push({ copper: VENDOR[id].copper, how: "vendor" });
   const sub = depth < 1 ? book.get(id) : undefined;
+  if (sub && making !== undefined && sub.reagents.some((g) => g.itemId === making)) return options.sort((a, b) => a.copper - b.copper)[0];
   if (sub) { const c = reagentCost(sub, price, book, own, depth + 1).copper; if (c !== undefined) options.push({ copper: c, how: "crafted" }); }
   return options.sort((a, b) => a.copper - b.copper)[0];
 }

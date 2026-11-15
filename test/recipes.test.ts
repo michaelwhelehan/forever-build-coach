@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { BUILT_IN, TAILORING, RecipeBook, reagentCost, profitRow, VENDOR, type Recipe } from "../src/sources/recipes.js";
+import { BUILT_IN, TAILORING, MINING, ENCHANTING, BLACKSMITHING, RecipeBook, reagentCost, profitRow, VENDOR, type Recipe } from "../src/sources/recipes.js";
 import { PriceHistory, historyKind, matchesCategory } from "../src/sources/price-history.js";
 import { createServer, type Deps } from "../src/server.js";
 import type { D1Like, D1Stmt } from "../src/sources/gold.js";
@@ -19,11 +19,12 @@ function fakeD1(): D1Like & { sql: DatabaseSync } {
   return { sql, prepare: (q) => stmt(q), batch: async (s) => { for (const x of s) await x.run(); return []; } };
 }
 
-const book = new Map([...BUILT_IN, ...TAILORING].map((r) => [r.itemId, r] as [number, Recipe]));
+const ALL = [...BUILT_IN, ...TAILORING, ...MINING, ...ENCHANTING, ...BLACKSMITHING];
+const book = new Map(ALL.map((r) => [r.itemId, r] as [number, Recipe]));
 
 describe("recipe maths", () => {
   it("built-in recipes have unique outputs and only positive quantities", () => {
-    const all = [...BUILT_IN, ...TAILORING];
+    const all = ALL;
     expect(new Set(all.map((r) => r.itemId)).size).toBe(all.length);
     for (const r of all) for (const g of r.reagents) expect(g.qty).toBeGreaterThan(0);
   });
@@ -51,6 +52,29 @@ describe("recipe maths", () => {
     expect(c.lines.find((l) => l.itemId === 2996)).toMatchObject({ how: "crafted", unit: 50 });
     expect(c.lines.find((l) => l.itemId === 2320)).toMatchObject({ how: "vendor", unit: 10 });
     expect(c.copper).toBe(60);
+  });
+
+  it("prices bronze from smelted bars and halves it, since one smelt makes two", () => {
+    const c = reagentCost(book.get(2841)!, (id) => ({ 2770: 100, 2771: 120, 2840: 140, 3576: 160 } as Record<number, number>)[id], book);
+    expect(c.lines.map((l) => [l.itemId, l.how, l.unit])).toEqual([[2840, "crafted", 100], [3576, "crafted", 120]]);
+    expect(c.copper).toBe(110);
+  });
+
+  it("turns essences up and down and prices wands with vendor wood", () => {
+    const prices: Record<number, number> = { 10938: 114, 10939: 304 };
+    // Joining 3 lesser: the lesser ones are bought, never "split from the greater one we're making".
+    expect(reagentCost(book.get(10939)!, (id) => prices[id], book).copper).toBe(342);
+    expect(reagentCost(book.get(10938)!, (id) => prices[id], book).copper).toBe(101);
+    // The wand's essence costs the cheaper of buying it (114c) or splitting a greater one (101c).
+    const wand = reagentCost(book.get(11287)!, (id) => prices[id], book);
+    expect(wand.lines.map((l) => l.how)).toEqual(["vendor", "crafted"]);
+    expect(wand.copper).toBe(VENDOR[4470].copper + 101);
+  });
+
+  it("prices blacksmithing stones from raw stone and cloth", () => {
+    const c = reagentCost(book.get(3241)!, (id) => ({ 2838: 200, 2592: 30 } as Record<number, number>)[id], book);
+    expect(c.copper).toBe(230);
+    expect(reagentCost(book.get(6338)!, (id) => ({ 2842: 381, 2835: 2 } as Record<number, number>)[id], book).copper).toBe(381 + 2 * 4);
   });
 
   it("uses your own reagent prices and reports missing ones", () => {
@@ -145,6 +169,12 @@ describe("crafting_profit tool", () => {
     expect(cat.profitCopper).toBe(950 - (399 + 395 + 40));
     expect(cat.soldPerDay).toBe(40);
     expect(cat.profitPerDayCopper).toBe(Math.round(cat.profitCopper * 40 * 0.25));
+
+    // "blacksmithy" is how players write it; it means the blacksmithing recipes.
+    const bs = await call("crafting_profit", { category: "blacksmithy", includeLosses: true, limit: 50 });
+    const professions = new Set([...(bs.recipes ?? []), ...(bs.noPrice ?? []), ...(bs.missingPrices ?? [])].map((r: { profession?: string }) => r.profession).filter(Boolean));
+    expect(JSON.stringify(bs)).toContain("Sharpening Stone");
+    expect([...professions].every((p) => p === "blacksmithing")).toBe(true);
     await c.close();
   });
 });
