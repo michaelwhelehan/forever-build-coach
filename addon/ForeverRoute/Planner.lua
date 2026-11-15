@@ -14,7 +14,7 @@ local XP_TO_LEVEL = {
 }
 ns.XP_TO_LEVEL = XP_TO_LEVEL
 local MAX_LEVEL = 60
-local LOG_SIZE = 20
+local LOG_SIZE = 40 -- WoW: Forever lets you hold 40 quests (Classic: 20); state.logSize overrides
 local HUB_YARDS = 45 -- stops this close together count as one place
 local NEAR_YARDS = 1600 -- quests to pick up without counting a zone change
 local ROOM_YARDS = 400 -- the quest givers of the hub you're at
@@ -196,6 +196,7 @@ function ns.Plan(state)
     if Q[id] then sim.log[id] = { complete = e.complete and not viaLeft }; sim.logCount = sim.logCount + 1 end
   end
 
+  local LOG_SIZE = state.logSize or LOG_SIZE
   local steps, startLevel, startXp, grinds, travels = {}, sim.level, sim.xp, 0, 0
   local function gain(xp)
     sim.xp = sim.xp + xp

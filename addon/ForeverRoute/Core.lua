@@ -292,6 +292,12 @@ function ns.skipList()
   return ForeverRouteCharDB.skip
 end
 
+-- How many quests you can hold: the game's own number when it says more than 40, else Forever's 40.
+local function logSize()
+  local n = (C_QuestLog and C_QuestLog.GetMaxNumQuestsCanAccept and C_QuestLog.GetMaxNumQuestsCanAccept()) or MAX_QUESTS
+  return math.max(tonumber(n) or 0, 40)
+end
+
 function ns.Replan(reason)
   if not ns.data then return end
   local Q = ns.LoadQuests()
@@ -312,7 +318,7 @@ function ns.Replan(reason)
     level = level, xp = UnitXP("player"), xpMax = UnitXPMax("player"),
     classBit = bitOf(select(3, UnitClass("player"))), raceBit = bitOf(select(3, UnitRace("player"))),
     map = pos.map, x = pos.x, y = pos.y, done = done, log = log, opts = opts,
-    skills = readSkills(), viaDone = ns.charDB().via, knownNodes = knownNodes(), hearth = hearthSpot(), hearthCooldown = hearthCooldown(),
+    logSize = logSize(), skills = readSkills(), viaDone = ns.charDB().via, knownNodes = knownNodes(), hearth = hearthSpot(), hearthCooldown = hearthCooldown(),
   }
   local okR, router = pcall(ns.NewRouter, { run = ns.pace(level).r or 7, known = state.knownNodes, hearth = state.hearth, flights = opts.flights,
     hearthstone = opts.hearthstone })

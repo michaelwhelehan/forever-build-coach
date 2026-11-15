@@ -221,6 +221,8 @@ do
   end
   local st = { level = 25, xp = 0, xpMax = ns.XP_TO_LEVEL[25], classBit = 128, raceBit = 16, map = 1424, x = 62.0, y = 20.0,
     done = done, log = log, opts = { skip = {} }, skills = {} }
+  assert(ns.Plan(st)[1].kind ~= "abandon", "18 of 40 quests: room enough, nothing to abandon")
+  st.logSize = 20 -- a full log
   local steps = ns.Plan(st)
   local accepts, abandons = 0, 0
   for i = 1, 15 do local s = steps[i]; if s.kind == "accept" then accepts = accepts + 1 elseif s.kind == "abandon" then abandons = abandons + 1 elseif s.kind == "do" then break end end
