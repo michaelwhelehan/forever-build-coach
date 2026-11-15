@@ -66,6 +66,9 @@ export function matchesCategory(want: string, kind: string | undefined, name: st
   const k = (kind ?? "").toLowerCase();
   if (w === "potion" || w === "alchemy" || w === "consumable") return ["potion", "elixir", "flask", "item enhancement"].includes(k);
   if (k.includes(w)) return true;
+  // A known kind (Cloth, Herb...) matches by kind only, so "cloth" doesn't pull in Cloth Gloves.
+  const kinds = [...Object.values(TRADE_GOODS), ...Object.values(CONSUMABLES)].map((x) => x.toLowerCase());
+  if (kinds.some((x) => x.includes(w))) return false;
   return name.toLowerCase().includes(w);
 }
 

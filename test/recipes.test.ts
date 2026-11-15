@@ -72,6 +72,7 @@ describe("which items get price history", () => {
     expect(matchesCategory("potions", "Herb", "Peacebloom")).toBe(false);
     expect(matchesCategory("dyes", "Other", "Cerulean Dye")).toBe(true);
     expect(matchesCategory("Herb", "Herb", "Peacebloom")).toBe(true);
+    expect(matchesCategory("cloth", undefined, "Cloth Gloves")).toBe(false);
   });
 });
 
