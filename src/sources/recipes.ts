@@ -30,6 +30,15 @@ export const VENDOR: Record<number, { name: string; copper: number }> = {
   3371: { name: "Empty Vial", copper: 4 },
   3372: { name: "Leaded Vial", copper: 40 },
   8925: { name: "Crystal Vial", copper: 500 },
+  // Tailoring (Forever prices from ForeverDB's tailoring route).
+  2320: { name: "Coarse Thread", copper: 10 },
+  2321: { name: "Fine Thread", copper: 100 },
+  4291: { name: "Silken Thread", copper: 500 },
+  8343: { name: "Heavy Silken Thread", copper: 2000 },
+  14341: { name: "Rune Thread", copper: 5000 },
+  2604: { name: "Red Dye", copper: 50 },
+  6260: { name: "Blue Dye", copper: 50 },
+  6261: { name: "Orange Dye", copper: 1000 },
 };
 
 const R = (itemId: number, name: string, qty = 1): Reagent => ({ itemId, name, qty });
@@ -79,6 +88,45 @@ export const BUILT_IN: Recipe[] = [
   A(13454, "Greater Arcane Elixir", 285, [x(R(13463, "Dreamfoil"), 3), R(13465, "Mountain Silversage"), CRYSTAL]),
 ];
 
+const LINEN = R(2589, "Linen Cloth"), WOOL = R(2592, "Wool Cloth"), SILK = R(4306, "Silk Cloth"), MAGEWEAVE = R(4338, "Mageweave Cloth"), RUNECLOTH = R(14047, "Runecloth");
+const B_LINEN = R(2996, "Bolt of Linen Cloth"), B_WOOL = R(2997, "Bolt of Woolen Cloth"), B_SILK = R(4305, "Bolt of Silk Cloth"), B_MAGE = R(4339, "Bolt of Mageweave"), B_RUNE = R(14048, "Bolt of Runecloth");
+const COARSE = R(2320, "Coarse Thread"), FINE = R(2321, "Fine Thread"), SILKEN = R(4291, "Silken Thread"), HEAVY_SILKEN = R(8343, "Heavy Silken Thread"), RUNE_THREAD = R(14341, "Rune Thread");
+const RED_DYE = R(2604, "Red Dye"), BLUE_DYE = R(6260, "Blue Dye"), ORANGE_DYE = R(6261, "Orange Dye"), RUGGED = R(8170, "Rugged Leather");
+
+const T = (itemId: number, name: string, skill: number, reagents: Reagent[], from: Recipe["from"] = "forever", note?: string): Recipe =>
+  ({ itemId, name, profession: "tailoring", skill, reagents, from, ...(note ? { note } : {}) });
+
+/**
+ * Tailoring: the cloth bolts and every recipe on ForeverDB's Forever tailoring route (reagents from there,
+ * bolt sizes worked out from its shopping list), plus the bags most people sell (Classic reagents).
+ */
+export const TAILORING: Recipe[] = [
+  T(2996, "Bolt of Linen Cloth", 1, [x(LINEN, 2)]),
+  T(2997, "Bolt of Woolen Cloth", 75, [x(WOOL, 3)]),
+  T(4305, "Bolt of Silk Cloth", 125, [x(SILK, 4)]),
+  T(4339, "Bolt of Mageweave", 175, [x(MAGEWEAVE, 5)]),
+  T(14048, "Bolt of Runecloth", 250, [x(RUNECLOTH, 5)]),
+  T(7026, "Linen Belt", 25, [B_LINEN, COARSE]),
+  T(2580, "Reinforced Linen Cape", 60, [x(B_LINEN, 2), x(COARSE, 3)]),
+  T(4238, "Linen Bag", 45, [x(B_LINEN, 3), x(COARSE, 3)], "classic"),
+  T(2584, "Woolen Cape", 75, [B_WOOL, FINE]),
+  T(4330, "Stylish Red Shirt", 110, [x(B_WOOL, 3), x(RED_DYE, 2), FINE]),
+  T(7053, "Azure Silk Cloak", 140, [x(B_SILK, 3), x(BLUE_DYE, 2), x(FINE, 2)]),
+  T(7058, "Crimson Silk Vest", 170, [x(B_SILK, 4), x(RED_DYE, 2), x(FINE, 2)]),
+  T(7062, "Crimson Silk Pantaloons", 180, [x(B_SILK, 4), x(RED_DYE, 2), x(SILKEN, 2)]),
+  T(10056, "Orange Mageweave Shirt", 185, [B_MAGE, ORANGE_DYE, HEAVY_SILKEN]),
+  T(9999, "Black Mageweave Leggings", 185, [x(B_MAGE, 2), x(SILKEN, 3)]),
+  T(10003, "Black Mageweave Gloves", 195, [x(B_MAGE, 2), x(HEAVY_SILKEN, 2)]),
+  T(10027, "Black Mageweave Shoulders", 205, [x(B_MAGE, 3), x(HEAVY_SILKEN, 2)]),
+  T(10050, "Mageweave Bag", 225, [x(B_MAGE, 4), x(HEAVY_SILKEN, 2)], "classic"),
+  T(10030, "Admiral's Hat", 215, [x(B_MAGE, 3), x(R(4589, "Long Elegant Feather"), 6), x(HEAVY_SILKEN, 2)]),
+  T(13856, "Runecloth Belt", 225, [x(B_RUNE, 3), RUNE_THREAD]),
+  T(13863, "Runecloth Gloves", 245, [x(B_RUNE, 4), x(RUGGED, 4), RUNE_THREAD]),
+  T(14046, "Runecloth Bag", 260, [x(B_RUNE, 5), x(RUGGED, 2), RUNE_THREAD], "classic"),
+  T(13866, "Runecloth Headband", 265, [x(B_RUNE, 4), x(R(14227, "Ironweb Spider Silk"), 2), RUNE_THREAD]),
+  T(14139, "Mooncloth Shoulders", 290, [x(B_RUNE, 5), x(R(14342, "Mooncloth"), 5), RUNE_THREAD]),
+];
+
 /** Item ids that count as a "dye" or "potion" group, for filters. */
 export const isPotionName = (n: string) => /potion|elixir|flask|draught|oil\b/i.test(n);
 export const isDyeName = (n: string) => /\bdye\b/i.test(n);
@@ -109,7 +157,7 @@ export class RecipeBook {
   async all(): Promise<Recipe[]> {
     const saved = await this.saved();
     const ids = new Set(saved.map((r) => r.itemId));
-    return [...saved, ...BUILT_IN.filter((r) => !ids.has(r.itemId))];
+    return [...saved, ...[...BUILT_IN, ...TAILORING].filter((r) => !ids.has(r.itemId))];
   }
 
   async save(r: Recipe): Promise<void> {

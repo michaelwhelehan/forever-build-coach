@@ -45,7 +45,7 @@ people "know" is really Classic 1.12 carried over.
 | `auction_houses` | Every Forever auction house, its faction and group, and one item's price across all of them | Battle.net key |
 | `gold_opportunities` | Money makers found on your house a few times a day: dips under the 7-day average, price spikes, greens worth disenchanting, ranked by Claude Haiku under a daily spending cap | Battle.net key, D1, optional Anthropic key |
 | `price_history` | Hourly prices for trade goods (dyes included) and potions on your house, 60 days: typical price by hour and weekday, below-usual now, sales per day. `category` takes a kind, `potions` or a name word like `dye` | Battle.net key, D1 |
-| `crafting_profit` | Profit per craft and per day: reagent cost at live prices against what the result sells for and how fast it sells. Common alchemy recipes built in | Battle.net key, D1 for sales |
+| `crafting_profit` | Profit per craft and per day: reagent cost at live prices against what the result sells for and how fast it sells. Common alchemy and tailoring recipes built in (`category: "tailoring"`) | Battle.net key, D1 for sales |
 | `crafting_recipe` | Save, correct or remove a recipe for `crafting_profit` (e.g. the new Forever dyes), shared by everyone on the server | D1 |
 | `farm_value` | Gold per hour from a farm | |
 | `profession_cost` | Cheapest known path to level a profession, with total cost | |
@@ -163,7 +163,7 @@ vendor price, intermediates like Blackmouth Oil at the cheaper of buying or craf
 the cheapest listing of the result (or its 7-day typical price when none is listed), takes off the 5% cut,
 and multiplies by the estimated sales a day and your share of them (default a quarter).
 
-The built-in recipes in `src/sources/recipes.ts` are the common alchemy ones. Their reagents are Classic
+The built-in recipes in `src/sources/recipes.ts` are the common alchemy ones, plus tailoring: cloth bolts, bags and every item on ForeverDB's Forever tailoring route. Their reagents are Classic
 1.12 except where ForeverDB's Forever route shows otherwise, so answers mark them as a baseline. Players
 fix or add recipes with `crafting_recipe`, saved in the D1 `recipes` table; a saved recipe replaces the
 built-in one for the same item.
