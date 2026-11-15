@@ -445,6 +445,11 @@ SlashCmdList.FOREVERROUTE = ns.guard("/fr", function(input)
     ns.Replan("opts")
   elseif cmd == "options" or cmd == "settings" or cmd == "config" then
     if ns.ToggleSettings then ns.ToggleSettings() end
+  elseif cmd == "room" then
+    o.makeRoom = not (o.makeRoom ~= false)
+    msg(o.makeRoom and "with a full quest log, far quests that pay less get an abandon step to make room for a hub's quests."
+      or "never suggesting abandoning quests to make room.")
+    ns.Replan("opts")
   elseif cmd == "zones" then
     ns.zones = nil; ns.Replan("zones")
     if not ns.zones or #ns.zones == 0 then msg("no zone has 4 or more worthwhile quests for you right now.") return end
@@ -471,7 +476,7 @@ SlashCmdList.FOREVERROUTE = ns.guard("/fr", function(input)
     if ns.ResetUI then ns.ResetUI() end
     msg("settings reset.")
   else
-    msg("/fr  show or hide | /fr options  settings window | /fr skip  skip the current quest | /fr unskip | /fr minxp 60  lowest XP % worth doing | /fr zones  best zones for your level | /fr skills |"
+    msg("/fr  show or hide | /fr options  settings window | /fr skip  skip the current quest | /fr unskip | /fr minxp 60  lowest XP % worth doing | /fr zones  best zones for your level | /fr room  abandon far quests for a full hub on/off | /fr skills |"
       .. " /fr above 3  levels above you | /fr dungeons | /fr group | /fr arrow | /fr pin | /fr refresh | /fr reset")
   end
 end)

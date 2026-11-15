@@ -84,6 +84,7 @@ local function stepDetail(s)
     if s.mode == "hearth" then return "use your hearthstone here" end
     return s.name or ""
   end
+  if s.kind == "abandon" and s.room then return "your log is full: it's far away, the quests here pay more (/fr skip keeps it)" end
   if s.kind == "abandon" then return string.format("too low now: %d XP left in it", ns.int(s.xp)) end
   if s.kind == "grind" then return string.format("no worthwhile quests left until level %d", ns.int(s.toLevel)) end
   return ""

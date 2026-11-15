@@ -17,6 +17,8 @@ local MAX_LEVEL = 60
 local LOG_SIZE = 20
 local HUB_YARDS = 45 -- stops this close together count as one place
 local NEAR_YARDS = 1600 -- quests to pick up without counting a zone change
+local ROOM_YARDS = 400 -- the quest givers of the hub you're at
+local FAR_SECONDS = 600 -- a quest in your log this far away can make room for a hub's quests
 local LOCAL_SECONDS = 150 -- closer than this (travel time) counts as where you are
 local ZONE_SWITCH = 1.15 -- another zone has to be this much better per second to leave
 local HEARTH_COOLDOWN = 3600
@@ -312,6 +314,41 @@ function ns.Plan(state)
     end
     return best, hub.sx, hub.sy, hubN, bestRate
   end
+
+  -- A full quest log at a busy hub: you could only take one quest at a time. Quests in your log that are far away and
+  -- pay less per second than the ones here get an "abandon to make room" step, as many as the hub needs.
+  local function makeRoom()
+    if not sim.map then return end
+    local free = LOG_SIZE - sim.logCount
+    local here = {}
+    for _, q in pairs(Q) do
+      if q.sm and q.sm > 0 and q.sm == sim.map and available(q, sim, opts) and worth(q, sim.level, opts)
+        and yards(sim.map, sim.x, sim.y, q.sm, q.sx, q.sy) <= ROOM_YARDS then
+        here[#here + 1] = rateOf("accept", q, travelTime(q.sm, q.sx, q.sy))
+      end
+    end
+    if #here <= free then return end
+    table.sort(here, function(a, b) return a > b end)
+    local far = {}
+    for id, e in pairs(sim.log) do
+      local q = Q[id]
+      if q and not e.complete and not opts.skip[id] then
+        local m, x, y = objectiveSpot(q)
+        if not m then m, x, y = q.em, q.ex, q.ey end
+        local t = travelTime(m, x, y)
+        if t > FAR_SECONDS then far[#far + 1] = { q = q, rate = rateOf("do", q, t), t = t } end
+      end
+    end
+    table.sort(far, function(a, b) return a.rate < b.rate end)
+    for i, c in ipairs(far) do
+      local forRate = here[math.max(free, 0) + i]
+      if not forRate or c.rate * 1.5 >= forRate then break end
+      sim.log[c.q.id] = nil
+      sim.logCount = sim.logCount - 1
+      add({ kind = "abandon", q = c.q, room = true, xp = floor(c.q.xp * xpRatio(sim.level, c.q.lv)) })
+    end
+  end
+  if opts.makeRoom ~= false then makeRoom() end
 
   local guard = 0
   while #steps < opts.steps and guard < opts.steps * 4 do

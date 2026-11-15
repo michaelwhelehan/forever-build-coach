@@ -212,5 +212,21 @@ do
     hearth = { map = 1413, x = 44.5, y = 59.1, name = "Camp Taurajo" }, hearthCooldown = 0 })
   assert(steps[1].kind == "turnin" and steps[1].q.id == 852, "hand in Hezrul Bloodmark first, got " .. steps[1].kind)
 end
+-- Tarren Mill with a full log of far Kalimdor quests: abandon some to pick up the hub's quests, not one at a time.
+do
+  local done, log, n = {}, {}, 0
+  for id, q in pairs(ns.Q) do if q.lv <= 20 or id == 493 or id == 494 then done[id] = true end end
+  for id, q in pairs(ns.Q) do
+    if n < 18 and (q.sm == 1413 or q.sm == 1440) and q.lv >= 22 and q.lv <= 26 and not done[id] and q.effort > 0 then log[id] = { complete = false }; n = n + 1 end
+  end
+  local st = { level = 25, xp = 0, xpMax = ns.XP_TO_LEVEL[25], classBit = 128, raceBit = 16, map = 1424, x = 62.0, y = 20.0,
+    done = done, log = log, opts = { skip = {} }, skills = {} }
+  local steps = ns.Plan(st)
+  local accepts, abandons = 0, 0
+  for i = 1, 15 do local s = steps[i]; if s.kind == "accept" then accepts = accepts + 1 elseif s.kind == "abandon" then abandons = abandons + 1 elseif s.kind == "do" then break end end
+  assert(abandons > 0 and accepts >= 4, "full log at Tarren Mill: " .. abandons .. " abandons, " .. accepts .. " pick-ups before the first objective")
+  st.opts.makeRoom = false
+  assert(ns.Plan(st)[1].kind ~= "abandon", "/fr room off: no abandon steps")
+end
 assert(chatErrors == 0, chatErrors .. " addon error(s) reported in chat")
 print("ok")
